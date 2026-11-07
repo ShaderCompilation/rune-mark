@@ -1,5 +1,7 @@
 //! Event, gesture, layout-watch and pointer-feedback handlers shared by `El` and `Node` behind
 //! `Cold<Handlers>`, so elements without callbacks pay one pointer.
+use std::rc::Rc;
+
 use crate::cold::Empty;
 use crate::el::{
     AtBottomFn, Cursor, DragEndFn, DragFn, DragOutFn, DropSpec, LayoutFn, LayoutTxFn, ModalSpec,
@@ -13,6 +15,7 @@ pub(crate) struct Handlers {
     pub on_window_focus: Option<WindowFocusFn>,
     pub modal: Option<ModalSpec>,
     pub on_press: Option<PressFn>,
+    pub on_text_press: Option<Rc<dyn Fn(crate::states::States<'_>, usize, &mut crate::Tx)>>,
     pub on_double_press: Option<PressFn>,
     pub on_secondary_press: Option<PointerFn>,
     pub on_hover: Option<PressFn>,
@@ -66,6 +69,7 @@ impl Handlers {
     #[inline]
     pub(crate) fn has_primary(&self) -> bool {
         self.on_press.is_some()
+            || self.on_text_press.is_some()
             || self.on_double_press.is_some()
             || self.on_hover.is_some()
             || self.on_drag.is_some()
@@ -76,6 +80,7 @@ impl Handlers {
     pub(crate) fn takes_hit(&self) -> bool {
         self.on_pointer_move.is_some()
             || self.on_press.is_some()
+            || self.on_text_press.is_some()
             || self.on_double_press.is_some()
             || self.on_secondary_press.is_some()
             || self.on_hover.is_some()
@@ -93,6 +98,7 @@ impl Empty for Handlers {
         on_window_focus: None,
         modal: None,
         on_press: None,
+        on_text_press: None,
         on_double_press: None,
         on_secondary_press: None,
         on_hover: None,

@@ -61,6 +61,19 @@ pub(super) struct Change {
 }
 
 impl Change {
+    // The before selection and resulting caret identify a simple replacement even when
+    // repeated text makes a common-prefix diff ambiguous. Groups spanning several unrelated
+    // edits fall back to the source-revision mapping.
+    fn text_replacement(&self) -> Option<(Range<usize>, usize)> {
+        let (before, after) = (&self.before, &self.after);
+        let start = before.anchor.min(before.focus).min(after.focus);
+        let end = before.text.len().checked_add(after.focus)?.checked_sub(after.text.len())?;
+        if start > end || end > before.text.len() || after.focus > after.text.len()
+            || before.text.get(..start)? != after.text.get(..start)?
+            || before.text.get(end..)? != after.text.get(after.focus..)? { return None; }
+        Some((start..end, after.focus - start))
+    }
+
     fn bytes(&self) -> usize {
         self.before.text.len()
             + self.after.text.len()
@@ -110,7 +123,13 @@ impl TextEdit {
         (!self.secure && self.group.0.is_none()).then(|| self.snapshot_now())
     }
 
-    fn restore(&mut self, s: &Snapshot) {
+    fn restore(&mut self, s: &Snapshot, replacement: Option<(Range<usize>, usize)>) {
+        if self.text != s.text.as_str() && let Some(range) = self.input_range.take() {
+            self.input_range = Some(match replacement {
+                Some((edit, inserted)) => Self::rebase_replacement(range, edit, inserted),
+                None => Self::rebase_source_range(range, &self.text, &s.text),
+            });
+        }
         self.text.zeroize();
         self.text.push_str(&s.text);
         self.anchor = s.anchor;
@@ -209,7 +228,9 @@ impl TextEdit {
         let Some(change) = h.undo.pop_back() else { return };
         // Public model text may have been replaced by the app. Never restore stale history.
         if self.text != change.after.text.as_str() { *h = History::default(); return; }
-        self.restore(&change.before);
+        let replacement = self.input_range.as_ref().and_then(|_| change.text_replacement())
+            .map(|(r, inserted)| (r.start..r.start + inserted, r.len()));
+        self.restore(&change.before, replacement);
         Arc::make_mut(&mut self.history).redo.push(change);
     }
 
@@ -220,7 +241,8 @@ impl TextEdit {
         let h = Arc::make_mut(&mut self.history);
         let Some(change) = h.redo.pop() else { return };
         if self.text != change.before.text.as_str() { *h = History::default(); return; }
-        self.restore(&change.after);
+        let replacement = self.input_range.as_ref().and_then(|_| change.text_replacement());
+        self.restore(&change.after, replacement);
         Arc::make_mut(&mut self.history).undo.push_back(change);
     }
 }

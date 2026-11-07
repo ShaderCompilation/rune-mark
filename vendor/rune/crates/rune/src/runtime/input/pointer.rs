@@ -176,6 +176,11 @@ impl<S: 'static> Runtime<S> {
             return;
         }
         self.playground_pointer_down(x);
+        if let Some(i) = target.filter(|&i| self.nodes[i].handlers.on_text_press.is_some()) {
+            let at = self.text_index_at(i, x, y).unwrap_or(0);
+            self.queue.push(Action::TextPress(self.nodes[i].path.clone(), at));
+            return;
+        }
         self.press_selection(target, x, y);
         // Inside a draggable row, dragging drags the row; clicks still select words and lines.
         if target.is_some_and(|t| self.nodes[t].handlers.on_drag.is_some() || self.nodes[t].handlers.drag_out.is_some()) {

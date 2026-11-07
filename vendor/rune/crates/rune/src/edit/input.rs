@@ -57,8 +57,9 @@ impl TextEdit {
         let m = ev.mods;
         self.normalize_hidden_selection();
         if self.is_hidden_multiline() && matches!(ev.key, Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End) {
-            self.focus = self.text.len();
-            self.anchor = if m.shift { 0 } else { self.focus };
+            let bounds = self.input_bounds();
+            self.focus = bounds.end;
+            self.anchor = if m.shift { bounds.start } else { self.focus };
             return out;
         }
         if let Some(c) = ev.control_binding() {
@@ -218,9 +219,9 @@ impl TextEdit {
                 let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
                 self.move_h(i, m.shift);
             }
-            Key::Home => self.set(0, m.shift),
+            Key::Home => self.set(self.input_bounds().start, m.shift),
             Key::End => {
-                let n = self.text.len();
+                let n = self.input_bounds().end;
                 self.set(n, m.shift)
             }
             Key::Up | Key::Down => {
@@ -254,8 +255,9 @@ impl TextEdit {
                 'z' if m.shift => self.redo(),
                 'z' => self.undo(),
                 'a' => {
-                    self.anchor = 0;
-                    self.focus = self.text.len();
+                    let range = self.input_bounds();
+                    self.anchor = range.start;
+                    self.focus = range.end;
                     self.pending = None;
                 }
                 'b' | 'i' | 'u' => {

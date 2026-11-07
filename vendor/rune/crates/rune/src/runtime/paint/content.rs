@@ -193,7 +193,7 @@ impl<S: 'static> Runtime<S> {
                 let e = &inp.edit;
                 let departing = self.flights.iter().any(|f| f.departs(&n.path, n.key.as_deref())
                     && f.alphas(f.destination, now, self.reduced_motion).0 > 0.0);
-                if e.text.is_empty() && e.preedit.is_none() && !inp.placeholder.is_empty() && !departing {
+                if e.input_bounds().is_empty() && e.preedit.is_none() && !inp.placeholder.is_empty() && !departing {
                     let pl_indent = spec.blocks.first().map_or(0.0, |b| (b.indent_pt(spec.style.size) * s).round() * tk);
                     let pl_origin = [rest_origin[0] + pl_indent, rest_origin[1]];
                     let pl_r_origin = if scale_motion == ScaleMotion::Still { pl_origin } else { [0.0, 0.0] };

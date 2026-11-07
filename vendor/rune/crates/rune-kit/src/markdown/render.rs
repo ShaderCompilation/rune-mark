@@ -5,6 +5,9 @@ use super::*;
 
 pub(super) struct Renderer {
     pub(super) s: MarkdownStyle,
+    pub(super) source: Rc<str>,
+    pub(super) source_click: Option<SourceWire>,
+    pub(super) current_source_range: RefCell<Range<usize>>,
     pub(super) highlights: Vec<(Vec<Range<usize>>, Highlight)>,
     pub(super) reveal: f32,
     pub(super) streaming: bool,
@@ -222,7 +225,8 @@ impl Renderer {
             }
         }
         e = e.text_highlights(self.text_highlights_for(&inl.text, map));
-        let e = self.select(self.wire_link(e, inl));
+        let e = if self.source_click.is_some() { self.click_text(e, &inl.text, map, 0, false) } else { self.wire_link(e, inl) };
+        let e = self.select(e);
         if !self.selectable { return e; }
         inl.spans.iter().filter(|s| matches!(s.2, Style::CodePad)).fold(e, |e, s| e.uncopied(s.0..s.1))
     }
@@ -272,6 +276,7 @@ impl Renderer {
         let s = &self.s;
         let highlights = self.text_highlights_for(code, map);
         let body = self.with_reveal(tabbed(code, self.syntax_spans(code, source), highlights, s.code_block).font(s.code_block).color(s.text));
+        let body = self.click_text(body, code, map, 0, !matches!(s.code_block.family, Family::Mono | Family::SystemMono));
         let frame = col().role("code").w_full().radius(6.0).fill(s.code_block_fill).border(0.5, s.code_block_border);
         if self.scroll_wide {
             // The text sizes to its longest line inside the viewport, which scrolls under the
@@ -312,6 +317,7 @@ impl Renderer {
                     (a < b).then(|| h.clone().with_range((a - line_start)..(b - line_start)))
                 })
                 .collect();
+            let offset = line_start;
             line_start = line_end + 1;
             let line = line.strip_suffix('\r').unwrap_or(line);
             let header = ["@@", "diff ", "index ", "--- ", "+++ "].iter().any(|p| line.starts_with(p));
@@ -326,7 +332,7 @@ impl Renderer {
                 .key(format!("l{n}"))
                 .w_full()
                 .px(s.code_block_pad[0])
-                .child(self.select(self.with_reveal(tabbed(shown, Vec::new(), line_hl, s.code_block).font(s.code_block).color(color).wrap()).w_full()));
+                .child(self.select(self.click_text(self.with_reveal(tabbed(shown, Vec::new(), line_hl, s.code_block).font(s.code_block).color(color).wrap()).w_full(), shown, if line.is_empty() { None } else { map }, offset, !matches!(s.code_block.family, Family::Mono | Family::SystemMono))));
             if let Some(t) = tint {
                 r = r.fill(t);
             }
@@ -368,7 +374,7 @@ impl Renderer {
 
     fn task_item(&self, (k, n): (usize, usize), item: &[Block], item_maps: &[BlockMap], item_idx: usize, checked: bool) -> El {
         let t = &self.s.task;
-        let interactive = self.on_task.is_some() && !self.tasks_read_only;
+        let interactive = self.on_task.is_some() && !self.tasks_read_only && self.source_click.is_none();
         let (fill, border) = if checked {
             (t.fill_on, t.border_on)
         } else {
@@ -401,9 +407,9 @@ impl Renderer {
             .focus_selected(checked)
             .focusable(interactive)
             .w_full()
-            .child(control)
+            .child(self.click_decoration(control))
             .child(self.blocks(item, item_maps, &[], false).grow(1.0).shrink());
-        if let Some(on_task) = self.on_task.as_ref().filter(|_| !self.tasks_read_only) {
+        if let Some(on_task) = self.on_task.as_ref().filter(|_| !self.tasks_read_only && self.source_click.is_none()) {
             let block_key = self.current_block_key.borrow().clone();
             r = on_task(r.cursor(Cursor::Pointer), block_key, item_idx, !checked);
         }
@@ -468,7 +474,7 @@ impl Renderer {
                             .position_in_set(k + 1, n)
                             .w_full()
                             .child(
-                                self.with_reveal(text(marker).font(s.body).color(s.muted).w(s.list_indent).align(Align::Center)).a11y_hidden(),
+                                self.click_decoration(self.with_reveal(text(marker).font(s.body).color(s.muted).w(s.list_indent).align(Align::Center)).a11y_hidden()),
                             )
                             .child(self.blocks(item, imap, &[], false).grow(1.0).shrink()),
                     );

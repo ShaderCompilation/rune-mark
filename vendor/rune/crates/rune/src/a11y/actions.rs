@@ -140,14 +140,14 @@ impl<S: 'static> Runtime<S> {
                 true
             }
             A11yAct::SetValue(value) => self.a11y_edit(path, tx, move |e| {
-                let len = e.text.len();
-                e.set_selection(0, len);
+                let range = e.input_bounds();
+                e.set_selection(range.start, range.end);
                 e.paste(&value)
             }),
             A11yAct::Replace(value) => self.a11y_edit(path, tx, move |e| e.paste(&value)),
             A11yAct::Select(a, b) => self.a11y_edit(path, tx, move |e| {
                 let (a, b) = (e.model_index(a), e.model_index(b));
-                e.set_selection(a, b);
+                e.set_view_selection(a, b, e.input_bounds());
                 crate::edit::EditOutcome::default()
             }),
             A11yAct::ScrollIntoView => {

@@ -102,7 +102,8 @@ fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
         return (to, to);
     }
     if e.is_secure() || (unit == Unit::Paragraph && e.is_single_line()) {
-        return (0, e.text.len());
+        let r = e.input_bounds();
+        return (r.start, r.end);
     }
     let pill = e.pills().find_map(|(r, _)| r.contains(&h.cluster).then_some((r.start, r.end)));
     if unit == Unit::Word
@@ -122,7 +123,8 @@ fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
             b = r.end;
         }
     }
-    (a, b)
+    let r = e.input_bounds();
+    (a.clamp(r.start, r.end), b.clamp(r.start, r.end))
 }
 
 impl<S: 'static> Runtime<S> {
@@ -213,8 +215,21 @@ impl<S: 'static> Runtime<S> {
         let layout = self.node(&path).and_then(|n| n.text_layout.clone());
         let s = self.env.scale;
         let scroll = self.input_scroll.get(&path).copied().unwrap_or(0.0);
+        let view = &self.node(&path).unwrap().input.as_ref().unwrap().edit;
+        let bounds = view.input_bounds();
+        let unit = match step {
+            Step::Down { clicks: 2, .. } => Unit::Word,
+            Step::Down { clicks: 3.., .. } => Unit::Paragraph,
+            Step::Drag => self.input_click.unit,
+            _ => Unit::Char,
+        };
+        let hit = layout.as_ref().map(|l| {
+            let h = hit(view, l, x + scroll, y, s, single);
+            let (a, b) = unit_at(view, h, unit);
+            (h, (a.clamp(bounds.start, bounds.end), b.clamp(bounds.start, bounds.end)))
+        });
         match step {
-            Step::Down { clicks, shift } => {
+            Step::Down { shift, .. } => {
                 self.set_focus(Some(path), false);
                 let e = access(states!(self));
                 e.set_single_line(single);
@@ -225,23 +240,16 @@ impl<S: 'static> Runtime<S> {
                     one.instant = true;
                     return true;
                 }
-                if let Some(l) = layout {
-                    let h = hit(e, &l, x + scroll, y, s, single);
+                if let Some((h, origin)) = hit {
                     if shift {
-                        let anchor = e.anchor;
+                        let anchor = e.anchor.clamp(bounds.start, bounds.end);
                         self.input_click.unit = Unit::Char;
                         self.input_click.origin = (anchor, anchor);
-                        e.set_selection(anchor, h.caret);
+                        e.set_view_selection(anchor, h.caret, bounds);
                     } else {
-                        let unit = match clicks {
-                            1 => Unit::Char,
-                            2 => Unit::Word,
-                            _ => Unit::Paragraph,
-                        };
-                        let origin = unit_at(e, h, unit);
                         self.input_click.unit = unit;
                         self.input_click.origin = origin;
-                        e.set_selection(origin.0, origin.1);
+                        e.set_view_selection(origin.0, origin.1, bounds);
                     }
                 }
                 one.instant = true;
@@ -258,12 +266,10 @@ impl<S: 'static> Runtime<S> {
                     self.input_click.clear();
                     return false;
                 }
-                let Some(l) = layout else { return false };
-                let h = hit(e, &l, x + scroll, y, s, single);
-                let at = unit_at(e, h, self.input_click.unit);
+                let Some((_, at)) = hit else { return false };
                 let (anchor, focus) = extend(self.input_click.origin, at);
                 let before = (e.anchor, e.focus);
-                e.set_selection(anchor, focus);
+                e.set_view_selection(anchor, focus, bounds);
                 if (e.anchor, e.focus) == before {
                     return false;
                 }

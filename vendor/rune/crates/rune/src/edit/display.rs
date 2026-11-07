@@ -11,31 +11,19 @@ impl TextEdit {
         if (self.secure && !self.revealed) || start >= end {
             return Vec::new();
         }
-        let s = Self::clamp_char_boundary(&self.text, start);
-        let e = Self::clamp_char_boundary(&self.text, end);
+        let r = self.input_bounds();
+        let s = Self::clamp_char_boundary(&self.text, start.clamp(r.start, r.end));
+        let e = Self::clamp_char_boundary(&self.text, end.clamp(r.start, r.end));
         if s >= e {
             return Vec::new();
         }
-        let Some((ref p, _)) = self.preedit else {
-            return vec![(s as u32, e as u32)];
-        };
+        let local = |s: usize, e: usize| ((s - r.start) as u32, (e - r.start) as u32);
+        let Some((ref p, _)) = self.preedit else { return vec![local(s, e)]; };
         let (a, b) = self.range();
-        let del_len = b - a;
-        let ins_len = p.len();
-        if e <= a {
-            vec![(s as u32, e as u32)]
-        } else if s >= b {
-            vec![((s - del_len + ins_len) as u32, (e - del_len + ins_len) as u32)]
-        } else {
-            let mut out = Vec::new();
-            if s < a {
-                out.push((s as u32, a as u32));
-            }
-            if e > b {
-                out.push(((a + ins_len) as u32, (e - del_len + ins_len) as u32));
-            }
-            out
-        }
+        let mut out = Vec::new();
+        if s < a { out.push(local(s, e.min(a))); }
+        if e > b { out.push(local(s.max(b) - (b - a) + p.len(), e - (b - a) + p.len())); }
+        out
     }
 
     /// Build the [`Span`]s, strikethrough ranges, [`Link`]s, and per-line [`Block`]s for
@@ -127,8 +115,8 @@ impl TextEdit {
             && !p.is_empty()
         {
             let (a, _) = self.range();
-            let ps = a as u32;
-            let pe = (a + p.len()) as u32;
+            let ps = (a - self.input_bounds().start) as u32;
+            let pe = ps + p.len() as u32;
             for m in self.active_marks().iter().filter(|m| !m.is_pill()) {
                 push_mark_span(ps, pe, m, &mut spans, &mut strikes, &mut links);
             }
@@ -173,19 +161,6 @@ impl TextEdit {
         if self.secure {
             return Vec::new();
         }
-        if self.preedit.is_none() {
-            let t = &self.text;
-            return self
-                .marks
-                .iter()
-                .filter_map(|m| {
-                    let id = m.mark.pill_id()?;
-                    let s = Self::clamp_char_boundary(t, m.start);
-                    let e = Self::clamp_char_boundary(t, m.end);
-                    (s < e && e - s == m.end - m.start).then_some((s as u32, e as u32, id))
-                })
-                .collect();
-        }
         self.marks
             .iter()
             .filter_map(|m| {
@@ -199,35 +174,50 @@ impl TextEdit {
     }
 
     fn display_blocks(&self, disp_text: &str) -> Vec<Block> {
-        let line_count = 1 + count_newlines(disp_text.as_bytes());
-        if self.blocks.is_empty() {
-            return vec![Block::Paragraph; line_count];
-        }
         if self.preedit.is_none() {
-            let mut out = self.blocks.clone();
-            out.resize(line_count, Block::Paragraph);
-            return out;
+            let first = self.line_of_byte(self.input_bounds().start);
+            let count = 1 + count_newlines(disp_text.as_bytes());
+            return (first..first + count).map(|i| self.blocks.get(i).copied().unwrap_or(Block::Paragraph)).collect();
         }
-        let (a, b) = self.range();
-        let line_a = self.line_of_byte(a);
-        let line_b = self.line_of_byte(b);
-        let mut out = self.blocks.clone();
-        if line_b > line_a && line_b < out.len() {
-            out.drain(line_a + 1..=line_b);
-        }
-        out.resize(line_count, out.get(line_a).copied().unwrap_or(Block::Paragraph));
-        out
+        self.display_line_models(disp_text).into_iter()
+            .map(|i| self.blocks.get(i).copied().unwrap_or(Block::Paragraph)).collect()
+    }
+
+    fn display_line_models(&self, disp_text: &str) -> Vec<usize> {
+        let mut model = self.input_bounds().start;
+        let mut line_index = self.line_of_byte(model);
+        let mut at = 0;
+        disp_text.split('\n').map(|line| {
+            let next = self.model_index(at);
+            line_index += count_newlines(&self.text.as_bytes()[model..next]);
+            model = next;
+            at += line.len() + 1;
+            line_index
+        }).collect()
+    }
+
+    pub(crate) fn display_soft_breaks(&self) -> Vec<u32> {
+        if self.soft_breaks.is_empty() { return Vec::new(); }
+        let (text, _) = self.display();
+        let mut previous = None;
+        self.display_line_models(&text).into_iter().enumerate().filter_map(|(i, line)| {
+            let original = previous != Some(line);
+            previous = Some(line);
+            (i > 0 && original && self.soft_breaks.binary_search(&(line as u32)).is_ok()).then_some(i as u32)
+        }).collect()
     }
 
     /// The text to lay out: committed text with any preedit spliced in at the caret, and the
     /// byte range of the preedit within it.
     pub fn display(&self) -> (String, Option<(usize, usize)>) {
+        let r = self.input_bounds();
+        let visible = &self.text[r.clone()];
         if self.secure {
             let text = if self.revealed {
-                self.text.clone()
+                visible.to_owned()
             } else if self.is_single_line() {
-                "•".repeat(self.text.chars().count())
-            } else if self.text.is_empty() {
+                "•".repeat(visible.chars().count())
+            } else if visible.is_empty() {
                 String::new()
             } else {
                 MULTILINE_SECURE_MASK.to_owned()
@@ -237,13 +227,13 @@ impl TextEdit {
         match &self.preedit {
             Some((p, _)) => {
                 let (a, b) = self.range();
-                let mut s = String::with_capacity(self.text.len() + p.len());
-                s.push_str(&self.text[..a]);
+                let mut s = String::with_capacity(visible.len() + p.len());
+                s.push_str(&self.text[r.start..a]);
                 s.push_str(p);
-                s.push_str(&self.text[b..]);
-                (s, Some((a, a + p.len())))
+                s.push_str(&self.text[b..r.end]);
+                (s, Some((a - r.start, a - r.start + p.len())))
             }
-            None => (self.text.clone(), None),
+            None => (visible.to_owned(), None),
         }
     }
 }

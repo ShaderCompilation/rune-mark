@@ -16,18 +16,19 @@ pub(crate) struct Mirror {
 
 /// Read at most 512 UTF-16 units on each side, without scanning the document prefix.
 fn context_window(edit: &crate::TextEdit) -> (usize, &str, u32, u32) {
+    let bounds = edit.input_bounds();
     let (a, b) = edit.range();
     let (raw_anchor, raw_focus) = if edit.anchor <= edit.focus { (a, b) } else { (b, a) };
     let mut start = a;
     let mut units = 0;
-    for (i, ch) in edit.text[..a].char_indices().rev() {
+    for (i, ch) in edit.text[bounds.start..a].char_indices().rev() {
         if units + ch.len_utf16() > 512 { break; }
         units += ch.len_utf16();
-        start = i;
+        start = bounds.start + i;
     }
     let mut end = b;
     let mut units = 0;
-    for ch in edit.text[b..].chars() {
+    for ch in edit.text[b..bounds.end].chars() {
         if units + ch.len_utf16() > 512 { break; }
         units += ch.len_utf16();
         end += ch.len_utf8();
@@ -179,6 +180,32 @@ mod tests {
     }
 
     #[test]
+    fn bounded_context_and_browser_edits_keep_global_utf16_mapping() {
+        fn view(edit: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
+            crate::text_input(edit, crate::tok::type_::BODY).key("input")
+                .source_range(7..15).on_edit(|e: &mut crate::TextEdit| e)
+        }
+        let mut edit = crate::TextEdit::new("prefix\né🦀ok\nsuffix");
+        edit.set_caret(9);
+        edit.focused = true;
+        let mut rt = Runtime::new(edit, view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let mut mirror = Mirror::default();
+        assert!(rt.web_context(&mut mirror));
+        assert_eq!((mirror.base, mirror.text.as_str(), mirror.anchor, mirror.focus), (7, "é🦀ok", 1, 1));
+        let mut event = json!({"kind":"edit", "key":mirror.key, "base":0, "expected":"prefix\n",
+            "start":0, "end":6, "text":"bad", "anchor":0, "focus":0});
+        rt.web_edit(&event);
+        assert_eq!(rt.state.text, "prefix\né🦀ok\nsuffix");
+        event = json!({"kind":"edit", "key":mirror.key, "base":7, "expected":"é🦀ok",
+            "start":1, "end":3, "text":"日本", "anchor":3, "focus":3});
+        rt.web_edit(&event);
+        assert_eq!(rt.state.text, "prefix\né日本ok\nsuffix");
+        assert_eq!(rt.state.focus, 15);
+        assert_eq!(rt.state.input_source_range(), None);
+    }
+
+    #[test]
     fn web_key_forwards_dom_code_for_digits_letters_and_punctuation() {
         type Seen = Vec<(crate::Key, Option<crate::PhysicalKeyCode>, bool)>;
         fn view(_: &Seen, _: &mut Cx<Seen>) -> El { crate::el() }
@@ -267,7 +294,9 @@ impl<S: 'static> Runtime<S> {
         let composing_before = self.composing();
         let changed = self.with_focused(|edit| {
             // Browser edits belong to the snapshot from which its context was mirrored.
-            if !edit.text.get(base..).is_some_and(|s| s.starts_with(expected)) { return EditOutcome::default(); }
+            let bounds = edit.input_bounds();
+            if base < bounds.start || base.checked_add(expected.len()).is_none_or(|end| end > bounds.end)
+                || !edit.text.get(base..).is_some_and(|s| s.starts_with(expected)) { return EditOutcome::default(); }
             if event["kind"] == "edit" || event["kind"] == "preedit" {
                 let Some((start, end)) = number("start").zip(number("end")) else { return EditOutcome::default() };
                 let Some((a, b)) = byte_at(expected, start).zip(byte_at(expected, end)) else { return EditOutcome::default() };
@@ -285,8 +314,10 @@ impl<S: 'static> Runtime<S> {
                 edit.insert(text);
                 if snapped { return EditOutcome::default(); }
             }
+            let bounds = edit.input_bounds();
             if let Some((anchor, focus)) = number("anchor").zip(number("focus"))
-                && let Some((a, f)) = byte_at(&edit.text[base..], anchor).zip(byte_at(&edit.text[base..], focus)) {
+                && let Some(context) = edit.text.get(base..bounds.end)
+                && let Some((a, f)) = byte_at(context, anchor).zip(byte_at(context, focus)) {
                 edit.anchor = base + a; edit.focus = base + f;
                 edit.snap_to_pills();
             }

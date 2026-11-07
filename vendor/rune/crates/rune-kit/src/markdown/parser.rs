@@ -12,16 +12,8 @@ impl SpanMap {
         if src.start >= src.end || out.start >= out.end {
             return;
         }
-        if let Some((last_src, last_out)) = self.0.last_mut()
-            && last_src.end == src.start
-            && last_out.end == out.start
-            && last_src.len() == last_out.len()
-            && src.len() == out.len()
-        {
-            last_src.end = src.end;
-            last_out.end = out.end;
-            return;
-        }
+        // Keep event boundaries: a decoded entity can have the same byte length as its
+        // spelling, but must never merge into a neighbouring literal mapping.
         self.0.push((src, out));
     }
 

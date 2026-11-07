@@ -4,6 +4,21 @@
 use super::*;
 
 impl El {
+    /// Display a UTF-8 source range of the shared `TextEdit`. Caret, selection, decorations
+    /// and undo remain in global buffer bytes; layout, hit testing and accessibility expose
+    /// only this view. Invalid endpoints clamp down to character boundaries. The app owns
+    /// the range and can rebase it with `TextEdit::rebase_source_range` after buffer edits.
+    /// Navigation may leave the range; an app can then activate another view or the full input.
+    pub fn source_range(mut self, range: std::ops::Range<usize>) -> Self {
+        if let Some(input) = &mut self.input {
+            input.edit.set_input_range(Some(range));
+            if let Some(text) = &mut self.text { text.replace_content(input.edit.display().0); }
+            self.sync_input_pills();
+            self.sync_input_rich();
+        }
+        self
+    }
+
     pub fn font(mut self, s: TextStyle) -> Self {
         if let Some(t) = &mut self.text {
             t.style = s;
@@ -196,7 +211,7 @@ impl El {
         t.spans = flat;
         t.strikes = strikes;
         t.blocks = blocks;
-        t.soft_breaks = inp.edit.soft_breaks.clone();
+        t.soft_breaks = inp.edit.display_soft_breaks();
         // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
         t.links = rich_links;
     }

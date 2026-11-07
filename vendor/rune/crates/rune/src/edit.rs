@@ -24,6 +24,7 @@ mod keys;
 pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
 mod marks;
 mod model;
+mod view;
 pub use model::{Block, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphInfo, RichStyle};
 pub(crate) use history::History;
 use history::{ActiveGroup, EditedTag};
@@ -65,6 +66,8 @@ pub struct TextEdit {
     revealed: bool,
     /// Mirrors the field's `El::single_line()`; the runtime sets it before each edit.
     line_mode: LineMode,
+    /// Transient input-view mapping; never included in undo snapshots.
+    input_range: Option<Range<usize>>,
     /// Formatting keys and rich paste are on (see [`TextEdit::rich`]).
     rich: bool,
     /// The mark kinds this field keeps, one bit per [`Mark::kind_order`]; `None` keeps all.
@@ -113,6 +116,7 @@ impl std::hash::Hash for TextEdit {
         self.secure.hash(h);
         self.revealed.hash(h);
         self.is_single_line().hash(h);
+        self.input_range.hash(h);
     }
 }
 
@@ -163,6 +167,7 @@ impl TextEdit {
             secure: false,
             revealed: false,
             line_mode: LineMode::Default,
+            input_range: None,
             rich: false,
             allowed_marks: None,
             allowed_blocks: None,
@@ -419,6 +424,7 @@ impl TextEdit {
     /// Replace the whole draft and discard its history, preserving focus and password mode.
     pub fn replace_text(&mut self, text: impl Into<String>) {
         let text = text.into();
+        self.rebase_input_range(0..self.text.len(), text.len());
         self.text.zeroize();
         let line_count = if self.secure { 0 } else { 1 + count_newlines(text.as_bytes()) };
         self.text = text;
@@ -496,76 +502,20 @@ impl TextEdit {
         self.replace_text(mask);
     }
 
-    /// Map model bytes to the bullet layout's bytes and back. Each Unicode scalar gets one
-    /// bullet in single-line mode so UTF-8 length never changes caret/selection alignment;
-    /// hidden multi-line fields pin the visual caret to the end of the fixed mask and map
-    /// pointer hits to the end of the model.
-    pub(crate) fn display_index(&self, byte: usize) -> usize {
-        if self.is_hidden_multiline() {
-            if self.text.is_empty() { 0 } else { MULTILINE_SECURE_MASK.len() }
-        } else if self.secure && !self.revealed {
-            self.text[..byte.min(self.text.len())].chars().count() * '•'.len_utf8()
-        } else {
-            byte.min(self.text.len())
-        }
-    }
-    pub(crate) fn model_index(&self, byte: usize) -> usize {
-        if self.is_hidden_multiline() {
-            self.text.len()
-        } else if self.secure && !self.revealed {
-            self.text.char_indices().nth(byte / '•'.len_utf8()).map_or(self.text.len(), |(i, _)| i)
-        } else {
-            byte.min(self.text.len())
-        }
-    }
-    pub(crate) fn display_selection_range(&self, a: usize, b: usize) -> (usize, usize) {
-        if self.is_hidden_multiline() {
-            if a == b || self.text.is_empty() { (0, 0) } else { (0, MULTILINE_SECURE_MASK.len()) }
-        } else {
-            (self.display_index(a), self.display_index(b))
-        }
-    }
-
     // A fixed mask has no visible interior positions. Preserve the revealed selection until
     // an edit occurs, then treat it as either the whole secret or an insertion at its end.
     fn normalize_hidden_selection(&mut self) {
         if self.is_hidden_multiline() {
             let selected = self.anchor != self.focus;
-            self.focus = self.text.len();
-            self.anchor = if selected { 0 } else { self.focus };
+            let bounds = self.input_bounds();
+            self.focus = bounds.end;
+            self.anchor = if selected { bounds.start } else { self.focus };
         }
     }
 
     /// Clears the draft and its history after submission, preserving keyboard focus.
     pub fn clear(&mut self) {
         self.replace_text("");
-    }
-
-    /// The selection as ordered byte offsets, clamped to character boundaries of `text` (an app
-    /// may have replaced `text` without moving the caret).
-    pub fn range(&self) -> (usize, usize) {
-        let t = &self.text;
-        (Self::clamp_char_boundary(t, self.anchor.min(self.focus)), Self::clamp_char_boundary(t, self.anchor.max(self.focus)))
-    }
-
-    /// Move the caret to `byte` (clamped to a character boundary of `self.text`) and collapse the
-    /// selection, clearing any pending typing style.
-    pub fn set_caret(&mut self, byte: usize) {
-        let b = Self::clamp_char_boundary(&self.text, byte);
-        self.anchor = b;
-        self.focus = b;
-        self.snap_to_pills();
-        self.pending = None;
-    }
-
-    /// Set the selection `anchor` and `focus` byte indices (clamped to character boundaries of
-    /// `self.text`), clearing any pending typing style. A selection that ends inside a
-    /// [`Mark::Pill`] grows to cover it.
-    pub fn set_selection(&mut self, anchor: usize, focus: usize) {
-        self.anchor = Self::clamp_char_boundary(&self.text, anchor);
-        self.focus = Self::clamp_char_boundary(&self.text, focus);
-        self.snap_to_pills();
-        self.pending = None;
     }
 
     /// The [`Mark::Pill`]s in `self.text`, in order, with their byte ranges and ids.
@@ -666,11 +616,6 @@ impl TextEdit {
         self.marks.push(MarkRange { start: a, end: a + label.len(), mark: Mark::Pill(id.into()) });
         self.normalize_marks();
         self.record_change(before, false);
-    }
-
-    /// The pill strictly containing byte `i` (`start < i < end`).
-    fn pill_around(&self, i: usize) -> Option<(usize, usize)> {
-        self.marks.iter().find(|m| m.mark.is_pill() && m.start < i && i < m.end).map(|m| (m.start, m.end))
     }
 
     /// `i` moved out of any pill it lands inside, to its end when `forward`, else its start.
@@ -791,6 +736,7 @@ impl TextEdit {
         mark_new_lines_soft: bool,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
+        self.rebase_input_range(a..b, s.len());
         let del_len = b - a;
         let ins_len = s.len();
         if self.marks.is_empty()
@@ -936,15 +882,19 @@ impl TextEdit {
     }
 
     fn replace(&mut self, (mut a, mut b): (usize, usize), s: &str, typing: bool) {
+        let bounds = self.input_bounds();
+        (a, b) = (a.clamp(bounds.start, bounds.end), b.clamp(bounds.start, bounds.end));
         if self.is_hidden_multiline() && self.is_pristine() {
-            (a, b) = (0, self.text.len());
+            (a, b) = (bounds.start, bounds.end);
         }
         if self.secure {
             let mut next = String::with_capacity(self.text.len() - (b - a) + s.len());
             next.push_str(&self.text[..a]);
             next.push_str(s);
             next.push_str(&self.text[b..]);
+            let range = self.input_range.take();
             self.replace_text(next);
+            self.input_range = range.map(|range| Self::rebase_replacement(range, a..b, s.len()));
             self.anchor = a + s.len();
             self.focus = self.anchor;
             self.mark_edited();
@@ -953,6 +903,8 @@ impl TextEdit {
         self.sync_invariants();
         // Backspace or Delete next to a pill, or a selection into one, takes it whole.
         let (a, b) = self.cover_pills(a, b);
+        let r = self.input_bounds();
+        let (a, b) = (a.clamp(r.start, r.end), b.clamp(r.start, r.end));
         if !typing { self.break_history_group(); }
         if &self.text[a..b] == s
             && self.pending.is_none()

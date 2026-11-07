@@ -1,5 +1,6 @@
-use rune::{AppSpec, Cx, El, ScrollSpec, TextStyle, col, el, row, text, text_input};
+use rune::{AppSpec, Cx, El, ScrollSpec, TextStyle, col, el, row, text};
 use rune_kit::{Kit, Markdown};
+use rune_markdown_prototype::editor::source_input;
 use rune_markdown_prototype::state::State;
 
 const SAMPLE: &str = include_str!("../sample.md");
@@ -61,19 +62,10 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
             stick_bottom: false,
         })
         .child(
-            col().w_full().padding(24.0).child(
-                text_input(&state.editor, TextStyle::new(14.0, 400.0).mono().lh(22.0))
-                    .key("markdown-input")
-                    .label("Markdown source")
-                    .w_full()
-                    .min_h(64.0)
-                    .wrap_anywhere()
-                    .color(kit.c.text_base)
-                    .caret(kit.c.text_base, kit.selection())
-                    .on_edit(|state: &mut State| &mut state.editor)
-                    // Rune submits on plain Enter; a source editor inserts a newline.
-                    .on_submit(|state: &mut State, _| state.editor.insert("\n")),
-            ),
+            col()
+                .w_full()
+                .padding(24.0)
+                .child(source_input(state, &kit)),
         );
 
     row()

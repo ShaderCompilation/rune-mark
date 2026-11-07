@@ -57,6 +57,7 @@ mod interrupt;
 mod links;
 mod parser;
 mod render;
+mod source;
 mod stream;
 mod style;
 mod table;
@@ -72,6 +73,8 @@ use links::{LinkHelp, LinkLook, LinkRing, LinkWire};
 pub use cache::{block_source_ranges, parse_cached};
 pub use highlight::{Highlight, HighlightItem};
 pub use parser::parse;
+pub use source::{RenderedText, SourceClick, SourceRegion, rendered_texts, source_region_at, source_regions};
+use source::SourceWire;
 
 use autolink::autolink_inline;
 use cache::{doc_cached, stream_cached};
@@ -154,6 +157,8 @@ pub struct Markdown {
     src: String,
     style: Option<MarkdownStyle>,
     block_keys: Vec<(usize, String)>,
+    source_click: Option<SourceWire>,
+    replacement: Option<(Range<usize>, El)>,
     highlights: Vec<(Vec<Range<usize>>, Highlight)>,
     autolink: bool,
     reveal: f32,
@@ -180,7 +185,7 @@ thread_local! {
 
 impl Markdown {
     pub fn new(src: impl Into<String>) -> Markdown {
-        Markdown { src: src.into(), style: None, block_keys: Vec::new(), highlights: Vec::new(), autolink: true, reveal: -1.0, streaming: false, on_link: None, on_link_secondary: None, link_look: None, link_help: None, link_ring: None,
+        Markdown { src: src.into(), style: None, source_click: None, replacement: None, block_keys: Vec::new(), highlights: Vec::new(), autolink: true, reveal: -1.0, streaming: false, on_link: None, on_link_secondary: None, link_look: None, link_help: None, link_ring: None,
             on_task: None, tasks_read_only: false, selectable: false, copy_source: false, scroll_wide: false, highlighter: Highlighter::builtin(),
             #[cfg(feature = "mermaid")]
             diagram_frame: None }
@@ -352,6 +357,8 @@ impl Markdown {
     /// Builds with `style`, for apps without a [`Kit`] (see [`MarkdownStyle::neutral`]).
     pub fn render(self, style: &MarkdownStyle) -> El {
         let can_cache = !self.streaming
+            && self.source_click.is_none()
+            && self.replacement.is_none()
             && self.on_link.is_none()
             && self.on_link_secondary.is_none()
             && self.link_look.is_none()
@@ -378,9 +385,10 @@ impl Markdown {
         self.render_uncached(style)
     }
 
-    fn render_uncached(self, style: &MarkdownStyle) -> El {
+    fn render_uncached(mut self, style: &MarkdownStyle) -> El {
         #[cfg(test)]
         RENDERS.with(|n| n.set(n.get() + 1));
+        if self.replacement.is_some() || self.source_click.is_some() { self.streaming = false; }
         let (blocks, sources, tasks, ranges, maps) = match (self.autolink, self.streaming) {
             (true, false) => doc_cached(&self.src),
             (true, true) => stream_cached(&self.src),
@@ -393,13 +401,14 @@ impl Markdown {
             ranges.iter().map(|range| self.block_keys.iter().find(|(offset, _)| *offset == range.start)
                 .map_or_else(String::new, |(_, key)| key.clone())).collect::<Vec<_>>()
         };
-        let r = Renderer { s: style.clone(), highlights: self.highlights, reveal: self.reveal, streaming: self.streaming, on_link: self.on_link, on_link_secondary: self.on_link_secondary, link_look: self.link_look, link_help: self.link_help, link_ring: self.link_ring,
+        let replacement = self.replacement;
+        let r = Renderer { source: self.src.clone().into(), source_click: self.source_click, current_source_range: RefCell::new(0..0), s: style.clone(), highlights: self.highlights, reveal: self.reveal, streaming: self.streaming, on_link: self.on_link, on_link_secondary: self.on_link_secondary, link_look: self.link_look, link_help: self.link_help, link_ring: self.link_ring,
             on_task: self.on_task, tasks_read_only: self.tasks_read_only, selectable: self.selectable, scroll_wide: self.scroll_wide,
             highlighter: self.highlighter, sources, next_source: Cell::new(0), tasks, next_task: Cell::new(0),
             current_block_key: RefCell::new("b0".into()),
             #[cfg(feature = "mermaid")]
             diagram_frame: self.diagram_frame };
-        let root = r.blocks(&blocks, &maps, &keys, true).selection_group(self.selectable);
+        let root = r.document(&blocks, &maps, &ranges, &keys, replacement).selection_group(self.selectable);
         if !(self.selectable && self.copy_source) { return root; }
         let starts: Rc<[usize]> = ranges.iter().map(|range| range.start).collect();
         let names: Rc<[String]> = rendered_keys(blocks.len(), &keys).into();

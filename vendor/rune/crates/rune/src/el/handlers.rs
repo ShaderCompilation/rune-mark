@@ -3,6 +3,15 @@
 use super::*;
 
 impl El {
+    /// Receives a primary pointer-down at the nearest UTF-8 byte boundary in this element's
+    /// shaped text. Uses the drawn layout, including wrapping, scrolling, scale and rotation.
+    /// An element without text receives 0. Takes the press before selection, links and focus
+    /// handling, so the callback can replace the text with an editor in the same commit.
+    pub fn on_text_press<S: 'static>(mut self, f: impl Fn(&mut S, usize, &mut Tx) + 'static) -> Self {
+        self.handlers.on_text_press = Some(Rc::new(move |s, at, tx| f(downcast::<S>(s), at, tx)));
+        self
+    }
+
     pub fn on_press<S: 'static>(self, f: impl Fn(&mut S) + 'static) -> Self {
         self.on_press_tx(move |s: &mut S, _tx: &mut Tx| f(s))
     }

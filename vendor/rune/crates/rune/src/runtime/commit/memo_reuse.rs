@@ -281,6 +281,7 @@ fn same_handlers(
         on_window_focus,
         modal,
         on_press,
+        on_text_press,
         on_double_press,
         on_secondary_press,
         on_hover,
@@ -318,6 +319,7 @@ fn same_handlers(
         }
         && opt_rc_eq(&a.on_window_focus, on_window_focus)
         && opt_rc_eq(&a.on_press, on_press)
+        && opt_rc_eq(&a.on_text_press, on_text_press)
         && opt_rc_eq(&a.on_double_press, on_double_press)
         && opt_rc_eq(&a.on_secondary_press, on_secondary_press)
         && opt_rc_eq(&a.on_hover, on_hover)

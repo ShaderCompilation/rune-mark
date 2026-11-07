@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use rune_kit::markdown::{Block, block_source_ranges, parse_cached};
+use rune_kit::markdown::{Block, SourceRegion, block_source_ranges, parse_cached, source_regions};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockKind {
@@ -29,6 +29,7 @@ pub struct ParsedDocument {
     // A read-only cache key, never an editing buffer or a history snapshot.
     source: String,
     blocks: Vec<BlockMetadata>,
+    regions: Vec<SourceRegion>,
 }
 
 impl ParsedDocument {
@@ -56,6 +57,7 @@ impl ParsedDocument {
         Self {
             source: source.to_owned(),
             blocks,
+            regions: source_regions(source),
         }
     }
 
@@ -70,6 +72,14 @@ impl ParsedDocument {
 
     pub fn blocks(&self) -> &[BlockMetadata] {
         &self.blocks
+    }
+
+    pub fn regions(&self) -> &[SourceRegion] {
+        &self.regions
+    }
+
+    pub(crate) fn rebase_range(&self, range: Range<usize>, source: &str) -> Range<usize> {
+        rune::TextEdit::rebase_source_range(range, &self.source, source)
     }
 
     pub(crate) fn is_current(&self, source: &str) -> bool {

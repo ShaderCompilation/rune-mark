@@ -79,19 +79,13 @@ fn block_activation_only_moves_caret_and_focus_and_preserves_redo() {
 }
 
 #[test]
-fn invalid_offsets_and_non_rendered_positions_do_not_change_the_editor() {
+fn invalid_offsets_do_not_change_the_editor() {
     let source = "# Բարև\n\ntext\n\n[id]: /target\n";
     let mut state = State::new(source);
     assert!(state.activate_block_at(0));
     let before = state.editor.clone();
     let active = state.view().active_source_range();
-    for offset in [
-        3,
-        source.find("\n\n").unwrap() + 1,
-        source.find("[id]").unwrap(),
-        source.len(),
-        usize::MAX,
-    ] {
+    for offset in [3, usize::MAX] {
         assert!(!state.activate_block_at(offset), "offset {offset}");
         assert_eq!(state.editor, before);
         assert_eq!(state.view().active_source_range(), active);
@@ -99,7 +93,7 @@ fn invalid_offsets_and_non_rendered_positions_do_not_change_the_editor() {
     for source in ["", "\n \t\n", "[id]: /target\n"] {
         let mut state = State::new(source);
         assert!(state.blocks().is_empty());
-        assert!(!state.activate_block_at(0));
+        assert!(state.activate_block_at(0));
         assert_eq!(state.editor.text, source);
     }
 }
@@ -117,7 +111,10 @@ fn metadata_refresh_tracks_edits_undo_and_redo_without_editing_the_buffer() {
     assert_eq!(state.editor, edited);
     assert_eq!(state.blocks().len(), 2);
     assert_eq!(state.blocks()[1].kind, BlockKind::List);
-    assert_eq!(state.view().active_source_range(), None);
+    assert_eq!(
+        state.view().active_source_range(),
+        Some(0..state.editor.text.len())
+    );
     assert!(!state.sync_document());
 
     state.editor.undo();
@@ -179,4 +176,28 @@ fn all_rendered_block_kinds_and_incomplete_markdown_have_valid_source_slices() {
         previous_end = block.source_range.end;
     }
     assert_eq!(previous_end, source.len());
+}
+
+#[test]
+fn blank_hidden_and_trailing_regions_are_editable_without_changing_history() {
+    let source = "# Բարև\n\ntext\n\n[id]: /target\n";
+    let mut state = State::new(source);
+    for offset in [
+        source.find("\n\n").unwrap() + 1,
+        source.find("[id]").unwrap(),
+        source.len(),
+    ] {
+        let before = state.editor.clone();
+        assert!(state.activate_block_at(offset));
+        assert_eq!(state.editor.text, before.text);
+        assert_eq!(state.editor.focus, offset);
+        let range = state.view().active_source_range().unwrap();
+        assert!(range.contains(&offset) || (range.is_empty() && offset == source.len()));
+        state.editor.undo();
+        assert_eq!(state.editor.text, source);
+    }
+    assert_eq!(
+        state.regions().last().unwrap().source_range,
+        source.len()..source.len()
+    );
 }

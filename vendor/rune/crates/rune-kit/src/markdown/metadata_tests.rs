@@ -37,3 +37,17 @@ fn growing_source_ranges_match_a_full_parse() {
         }
     }
 }
+
+#[test]
+fn editable_metadata_reuses_parse_and_incremental_maps_match_full_parse() {
+    let source = "# Բարև\n\n- first\n  - nested &amp;\n\n| a | b |\n| - | - |\n| café | `code` |\n\nlast";
+    for end in (0..=source.len()).filter(|&i| source.is_char_boundary(i)) {
+        let src = &source[..end];
+        let cached = doc_cached(src);
+        let before = PARSES.with(Cell::get);
+        source_regions(src);
+        rendered_texts(src);
+        assert_eq!(PARSES.with(Cell::get), before);
+        assert_eq!(&*cached.4, &parse_doc(src, true).5, "{src:?}");
+    }
+}

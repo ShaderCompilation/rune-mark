@@ -183,7 +183,7 @@ impl<S: 'static> Runtime<S> {
     /// The value and state a text field adds to its node.
     pub(super) fn a11y_input(&self, _i: usize, input: &crate::el::InputSpec, node: &mut AkNode) {
         if !input.placeholder.is_empty() { node.set_placeholder(input.placeholder.as_str()); }
-        if !input.edit.is_secure() { node.set_value(input.edit.text.as_str()); }
+        if !input.edit.is_secure() { node.set_value(&input.edit.text[input.edit.input_bounds()]); }
         if input.access.is_none() { node.set_read_only(); }
     }
 }

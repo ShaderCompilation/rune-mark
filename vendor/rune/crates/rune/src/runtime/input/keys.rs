@@ -165,8 +165,8 @@ impl<S: 'static> Runtime<S> {
     /// [`Self::with_focused`] for an edit that needs the app state (an app's paste hook).
     pub(super) fn with_focused_state(&mut self, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
         let Some(path) = self.focused.clone() else { return false };
-        let Some((access, submit, change, animate_layout, single_line, secure, revealed_override)) =
-            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override))
+        let Some((access, submit, change, animate_layout, single_line, secure, revealed_override, input_range)) =
+            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override, i.edit.input_source_range()))
         else {
             return false;
         };
@@ -175,6 +175,7 @@ impl<S: 'static> Runtime<S> {
         {
             let edit = access(states!(self));
             edit.set_single_line(single_line);
+            edit.set_input_range(input_range);
             if secure && !edit.is_secure() { edit.set_secure(true); }
             if let Some(rev) = revealed_override { edit.set_revealed(rev); }
         }
@@ -207,6 +208,7 @@ impl<S: 'static> Runtime<S> {
             // A field with nothing to submit passes Return to the default button, as in a sheet.
             self.press_default_button(tx);
         }
+        access(states!(self)).set_input_range(None);
         true
     }
 

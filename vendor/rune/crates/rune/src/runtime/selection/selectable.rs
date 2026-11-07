@@ -539,7 +539,7 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// Byte offset of node `i`'s text under window point (x, y), where it was drawn this frame.
-    fn text_index_at(&self, i: usize, x: f32, y: f32) -> Option<usize> {
+    pub(in crate::runtime) fn text_index_at(&self, i: usize, x: f32, y: f32) -> Option<usize> {
         let n = &self.nodes[i];
         let (spec, layout) = (n.text.as_ref()?, n.text_layout.as_ref()?);
         let s = self.env.scale;

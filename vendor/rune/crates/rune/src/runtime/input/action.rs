@@ -23,6 +23,7 @@ pub(super) enum Action {
     /// `El::on_drawn_layout`; true when only a live value, scroll or animation moved it.
     DrawnLayout(String, [f32; 4], bool),
     Press(String, crate::PointerButton),
+    TextPress(String, usize),
     DoublePress(String),
     Link(String, usize),
     /// `El::on_link_secondary`: the text, its link and the press.
@@ -112,6 +113,7 @@ pub(super) fn live_only_handler(action: &Action) -> Option<&'static str> {
         Action::HoverChange(..) => "on_hover_change",
         Action::SelectionChange(..) => "on_selection_change",
         Action::Press(..) => "on_press",
+        Action::TextPress(..) => "on_text_press",
         Action::DoublePress(_) => "on_double_press",
         Action::Link(..) => "on_link",
         Action::LinkSecondary(..) => "on_link_secondary",
@@ -132,7 +134,7 @@ pub(super) fn live_only_handler(action: &Action) -> Option<&'static str> {
 #[cfg(debug_assertions)]
 pub(super) fn action_path(action: &Action) -> Option<&str> {
     match action {
-        Action::PointerMove(path, _) | Action::DrawnLayout(path, ..) | Action::Layout(path, _) | Action::Hover(path) | Action::HoverChange(path, _) | Action::SelectionChange(path, _) | Action::Press(path, _) | Action::DoublePress(path)
+        Action::PointerMove(path, _) | Action::DrawnLayout(path, ..) | Action::Layout(path, _) | Action::Hover(path) | Action::HoverChange(path, _) | Action::SelectionChange(path, _) | Action::Press(path, _) | Action::DoublePress(path) | Action::TextPress(path, _)
         | Action::Link(path, _) | Action::LinkSecondary(path, ..) | Action::SecondaryPress(path, _) | Action::Drag(path, ..) | Action::DragRepeat(path, ..) | Action::DragStart(path)
         | Action::DragEnd(path, _) => Some(path),
         Action::Wheel(_, chain, _) | Action::Gesture(chain, _) => chain.first().map(String::as_str),
@@ -374,6 +376,11 @@ impl<S: 'static> Runtime<S> {
                 let Some(f) = self.node(&path).and_then(|n| n.handlers.on_selection_change.clone()) else { return false };
                 f(states!(self), &change, &mut one);
                 one.select_from_change = one.select.is_some();
+                true
+            }
+            Action::TextPress(path, at) => {
+                let Some(f) = self.node(&path).and_then(|n| n.handlers.on_text_press.clone()) else { return false };
+                f(states!(self), at, &mut one);
                 true
             }
             Action::Press(path, button) => {
