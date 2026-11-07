@@ -1,0 +1,14 @@
+[package]
+name = "rune-markdown-prototype"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+
+[dependencies]
+# Both crates come from the same vendored workspace.
+rune = { path = "vendor/rune/crates/rune", default-features = false, features = ["accessibility", "dbus", "embedded-fonts"] }
+rune-kit = { path = "vendor/rune/crates/rune-kit", features = ["markdown"] }
+
+[profile.dev.package."*"]
+debug = false

@@ -1,0 +1,78 @@
+//! Read-only metadata derived from the shared editor buffer.
+
+use std::ops::Range;
+
+use rune_kit::markdown::{Block, block_source_ranges, parse_cached};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockKind {
+    Paragraph,
+    Heading(u8),
+    Code,
+    List,
+    Quote,
+    Rule,
+    Table,
+    Diff,
+    Mermaid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockMetadata {
+    pub kind: BlockKind,
+    /// UTF-8 byte offsets into the complete Markdown source, including block markers.
+    /// Lists and quotes include all their nested content.
+    pub source_range: Range<usize>,
+}
+
+pub struct ParsedDocument {
+    // A read-only cache key, never an editing buffer or a history snapshot.
+    source: String,
+    blocks: Vec<BlockMetadata>,
+}
+
+impl ParsedDocument {
+    pub fn new(source: &str) -> Self {
+        let parsed = parse_cached(source);
+        let ranges = block_source_ranges(source);
+        let blocks = parsed
+            .iter()
+            .zip(ranges.iter())
+            .map(|(block, range)| BlockMetadata {
+                kind: match block {
+                    Block::Para(_) => BlockKind::Paragraph,
+                    Block::Heading(level, _) => BlockKind::Heading(*level),
+                    Block::Code(_) => BlockKind::Code,
+                    Block::List { .. } => BlockKind::List,
+                    Block::Quote(_) => BlockKind::Quote,
+                    Block::Rule => BlockKind::Rule,
+                    Block::Table(_) => BlockKind::Table,
+                    Block::Diff(_) => BlockKind::Diff,
+                    Block::Mermaid(_) => BlockKind::Mermaid,
+                },
+                source_range: range.clone(),
+            })
+            .collect();
+        Self {
+            source: source.to_owned(),
+            blocks,
+        }
+    }
+
+    /// Reparse only when the source changes; selection and mode changes reuse metadata.
+    pub fn refresh(&mut self, source: &str) -> bool {
+        if self.is_current(source) {
+            return false;
+        }
+        *self = Self::new(source);
+        true
+    }
+
+    pub fn blocks(&self) -> &[BlockMetadata] {
+        &self.blocks
+    }
+
+    pub(crate) fn is_current(&self, source: &str) -> bool {
+        self.source == source
+    }
+}
