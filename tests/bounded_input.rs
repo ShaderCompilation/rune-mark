@@ -242,7 +242,8 @@ fn enter_and_paste_keep_the_entire_edited_region_open_across_block_splits() {
     let range = rt.state.view().active_source_range().unwrap();
     assert_eq!(range.start, start);
     assert!(rt.state.editor.text[range.clone()].contains("alpha\n\n\n# inserted\n\n beta"));
-    assert_eq!(displayed(&rt), "alpha\n\n\n# inserted\n\n beta");
+    // The caret is not on the pasted heading, so its marker stays hidden in Live Preview.
+    assert_eq!(displayed(&rt), "alpha\n\n\ninserted\n\n beta");
     assert_eq!(
         &rt.state.editor.text[range],
         "alpha\n\n\n# inserted\n\n beta\n"

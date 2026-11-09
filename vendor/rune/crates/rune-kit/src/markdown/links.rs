@@ -72,7 +72,7 @@ impl Renderer {
         if let Some((own, _)) = self.link_look.as_ref().and_then(|look| url.and_then(|u| look(u))) {
             Span { start: a as u32, end: b as u32, ..own }
         } else {
-            Span { color: Some(s.accent), underline: Some(s.link_underline), ..Span::new(a, b) }
+            render::default_link_span(s, a..b)
         }
     }
 

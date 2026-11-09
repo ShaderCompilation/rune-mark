@@ -7,6 +7,7 @@ use super::*;
 pub(super) fn break_lines_with_blocks(
     layout: &mut Layout<Ink>,
     blocks: &[crate::edit::Block],
+    boxes: &[crate::edit::LineBox],
     font_size: f32,
     scale: f32,
     max_width: Option<f32>,
@@ -18,7 +19,7 @@ pub(super) fn break_lines_with_blocks(
     let mut caps: Vec<((usize, usize), f32)> = Vec::new();
     let mut lines_meta = Vec::new();
     for _ in 0..=2 * pills {
-        break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, &mut lines_meta);
+        break_lines_capped(layout, blocks, boxes, font_size, scale, max_width, &caps, &mut lines_meta);
         if max_width.is_none() || pills == 0 || !collect_misplaced_pills(layout, &lines_meta, &mut caps) {
             return;
         }
@@ -27,9 +28,11 @@ pub(super) fn break_lines_with_blocks(
 
 /// [`break_lines_with_blocks`] once, with `caps` setting the room on given `(para_idx, line_in_para)`
 /// lines (the last for a line wins). Fills `out` with `((para_idx, line_in_para), uncapped_room)`.
+#[allow(clippy::too_many_arguments)]
 fn break_lines_capped(
     layout: &mut Layout<Ink>,
     blocks: &[crate::edit::Block],
+    boxes: &[crate::edit::LineBox],
     font_size: f32,
     scale: f32,
     max_width: Option<f32>,
@@ -43,8 +46,15 @@ fn break_lines_capped(
     let (mut para_idx, mut line_in_para) = (0usize, 0usize);
     while !breaker.is_done() {
         let blk = blocks.get(para_idx).copied().unwrap_or(crate::edit::Block::Paragraph);
-        let indent = (blk.indent_pt(font_size) * scale).round();
-        let right_pad = if blk == crate::edit::Block::Code { indent } else { 0.0 };
+        // A projected field's line boxes give each displayed line's own indents instead.
+        let (indent, right_pad) = match boxes.get(para_idx) {
+            Some(b) => ((if line_in_para == 0 { b.first_indent } else { b.indent } * scale).round(), 0.0),
+            None if !boxes.is_empty() => (0.0, 0.0),
+            None => {
+                let indent = (blk.indent_pt(font_size) * scale).round();
+                (indent, if blk == crate::edit::Block::Code { indent } else { 0.0 })
+            }
+        };
         let line_max = max_width
             .map_or(f32::MAX, |w| (w - indent - right_pad).max(1.0))
             .min(layout_max);

@@ -382,6 +382,12 @@ fn map_code_span(src: &str, range: Range<usize>, rendered: &str, offset: usize, 
 }
 
 /// Parses `src` into blocks. Unclosed constructs are closed at the end of input.
+/// The language word of a fence's info string: `rust,ignore` and `ts title="a.ts"` name
+/// their language first. Shared with the editable presentation, so both infer it alike.
+pub(super) fn fence_word(info: &str) -> &str {
+    info.split(|c: char| c.is_whitespace() || c == ',').next().unwrap_or("")
+}
+
 pub fn parse(src: &str) -> Vec<Block> {
     parse_doc(src, true).0
 }
@@ -468,8 +474,7 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     b.flush_inline();
                     let fence = match &kind {
                         CodeBlockKind::Fenced(info) => {
-                            // `rust,ignore` and `ts title="a.ts"` name their language first.
-                            let word = info.split(|c: char| c.is_whitespace() || c == ',').next().unwrap_or("");
+                            let word = fence_word(info);
                             match word.to_ascii_lowercase().as_str() {
                                 "diff" | "patch" => Fence::Diff,
                                 "mermaid" => Fence::Mermaid(fence_closed(&src[range])),

@@ -273,3 +273,109 @@ pub(super) fn rect_inst(rect: [f32; 4], fill: [f32; 4], radius: f32, clip: [f32;
         fade: crate::render::pack_fade(fade, clip, clip),
     }
 }
+
+/// A projected field's line boxes: code frames under the text, quote rules and gutter markers
+/// (see [`LineBox`](crate::LineBox)). Rules and frames join across adjacent lines.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_line_boxes(
+    instances: &mut Vec<Instance>,
+    text_sys: &mut TextSystem,
+    images: &mut crate::pixels::ImageAtlas,
+    glyph_scratch: &mut Vec<crate::text::GlyphQuad>,
+    spec: &TextSpec,
+    layout: &Layout<Ink>,
+    origin: [f32; 2],
+    x1: f32,
+    (s, tk, raster): (f32, f32, f32),
+    glide: [f32; 2],
+    (o, srgb): (f32, bool),
+    clip: [f32; 4],
+    fade: [f32; 4],
+) {
+    use crate::edit::MarkerKind;
+    let pt = |v: f32| v * s * tk;
+    let line_h_default = spec.style.line_px() * s * tk;
+    // (x, width, color, top, bottom) of rules still running, and the frame run.
+    let mut rules: Vec<(f32, f32, Color, f32, f32)> = Vec::new();
+    let mut frame: Option<(f32, Color, Color, f32, f32)> = None;
+    let mut out_rules = Vec::new();
+    let mut frames = Vec::new();
+    let mut markers = Vec::new();
+    let (mut para, mut first) = (0usize, true);
+    let mut lines = layout.lines().map(|l| {
+        let m = l.metrics();
+        let top = origin[1] + m.block_min_coord * tk;
+        let bot = if m.block_max_coord > m.block_min_coord { origin[1] + m.block_max_coord * tk } else { top + line_h_default };
+        (top, bot, origin[1] + m.baseline * tk, l.break_reason() == parley::BreakReason::Explicit)
+    }).collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push((origin[1], origin[1] + line_h_default, origin[1] + spec.style.size * 0.8 * s * tk, false));
+    }
+    for (top, bot, baseline, explicit) in lines {
+        let Some(b) = spec.line_boxes.get(para) else { break };
+        let mut kept = Vec::new();
+        for &(x, w, c) in &b.rules {
+            match rules.iter().position(|r| r.0 == x && r.1 == w && r.2 == c) {
+                Some(i) => kept.push((rules[i].0, w, c, rules[i].3, bot)),
+                None => kept.push((x, w, c, top, bot)),
+            }
+        }
+        for r in rules.drain(..) {
+            if !kept.iter().any(|k| k.0 == r.0 && k.1 == r.1 && k.2 == r.2) { out_rules.push(r); }
+        }
+        rules = kept;
+        match (b.frame, &mut frame) {
+            (Some((x, fill, border)), Some(f)) if f.0 == x && f.1 == fill && f.2 == border => f.4 = bot,
+            (next, f) => {
+                if let Some(done) = f.take() { frames.push(done); }
+                *f = next.map(|(x, fill, border)| (x, fill, border, top, bot));
+            }
+        }
+        if first && let Some(m) = &b.marker { markers.push((m.clone(), top, bot, baseline)); }
+        if explicit { para += 1; first = true; } else { first = false; }
+    }
+    out_rules.extend(rules);
+    frames.extend(frame);
+    for (x, fill, border, top, bot) in frames {
+        let pad = pt(4.0);
+        let mut inst = rect_inst([origin[0] + pt(x) + glide[0], top - pad + glide[1], (x1 - origin[0] - pt(x)).max(0.0), bot - top + 2.0 * pad],
+            premul(fill, o, srgb), pt(6.0), clip, fade);
+        inst.border = premul(border, o, srgb);
+        inst.params[0] = (0.5 * s * tk).max(0.5);
+        instances.push(inst);
+    }
+    for (x, w, c, top, bot) in out_rules {
+        instances.push(rect_inst([origin[0] + pt(x) + glide[0], top + glide[1], pt(w), bot - top], premul(c, o, srgb), pt(w) * 0.5, clip, fade));
+    }
+    for (m, top, bot, baseline) in markers {
+        let [cx, cw] = m.column();
+        match m.kind() {
+            MarkerKind::Text(label) => {
+                let ml = text_sys.layout_rich(label, &[], spec.style, s, None);
+                let mw = ml.full_width();
+                let m_base = ml.lines().next().map_or(spec.style.size * 0.8 * s, |l| l.metrics().baseline);
+                let mx = origin[0] + (pt(cx) + (pt(cw) - mw * tk) * 0.5).max(0.0);
+                let m_origin = [mx.round(), (baseline - m_base * tk).round()];
+                glyph_scratch.clear();
+                text_sys.set_glyph_inks(m.color(), &[]);
+                text_sys.set_glide(glide);
+                text_sys.glyphs_for_layout_scaled(&ml, m_origin, raster, false, glyph_scratch);
+                text_sys.set_glide([0.0; 2]);
+                let mc = premul(m.color(), o, srgb);
+                for q in &*glyph_scratch {
+                    instances.extend(glyph_or_image(q, text_sys, images, mc, clip, fade).map(|g| zoom_glyph(g, m_origin, m_origin, tk / raster)));
+                }
+            }
+            MarkerKind::Task { checked } => {
+                let size = pt(14.0).min((bot - top).max(1.0));
+                let x = origin[0] + pt(cx) + (pt(cw) - size) * 0.5;
+                let y = top + (bot - top - size) * 0.5;
+                let fill = if *checked { m.fill().unwrap_or(m.color()) } else { Color::TRANSPARENT };
+                let mut inst = rect_inst([x.round() + glide[0], y.round() + glide[1], size, size], premul(fill, o, srgb), pt(3.0), clip, fade);
+                inst.border = premul(m.color(), o, srgb);
+                inst.params[0] = s * tk;
+                instances.push(inst);
+            }
+        }
+    }
+}

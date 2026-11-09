@@ -210,13 +210,13 @@ impl TextEdit {
                 }
             }
             Key::Left => {
-                let i = if m.cmd { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
+                let i = if m.cmd { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { self.projected_step(false).unwrap_or_else(|| prev_char(&self.text, self.focus)) };
                 self.move_h(i, m.shift);
             }
             Key::Right if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Down if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Right => {
-                let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
+                let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { self.projected_step(true).unwrap_or_else(|| next_char(&self.text, self.focus)) };
                 self.move_h(i, m.shift);
             }
             Key::Home => self.set(self.input_bounds().start, m.shift),

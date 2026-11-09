@@ -187,6 +187,10 @@ impl<S: 'static> Runtime<S> {
                     fade,
                 );
             }
+            if !spec.line_boxes.is_empty() {
+                emit_line_boxes(&mut self.instances, &mut self.text, &mut self.images, &mut self.glyph_scratch, spec, layout,
+                    rest_origin, x1 - glide[0], (s, tk, raster), glide, (o, srgb), clip, fade);
+            }
             // Text fields: selection under the text, placeholder, caret over it.
             let mut caret = None;
             if let Some(inp) = &n.input {

@@ -17,6 +17,20 @@ impl TextEdit {
         if s >= e {
             return Vec::new();
         }
+        if let Some(proj) = self.active_projection() {
+            let shown = proj.map_range(s, e);
+            let Some((ref pre, _)) = self.preedit else {
+                return shown.into_iter().map(|d| (d.start as u32, d.end as u32)).collect();
+            };
+            let (da, db) = self.preedit_display_span(proj);
+            let shift = |d: usize| (d - (db - da) + pre.len()) as u32;
+            let mut out = Vec::new();
+            for d in shown {
+                if d.start < da { out.push((d.start as u32, d.end.min(da) as u32)); }
+                if d.end > db { out.push((shift(d.start.max(db)), shift(d.end))); }
+            }
+            return out;
+        }
         let local = |s: usize, e: usize| ((s - r.start) as u32, (e - r.start) as u32);
         let Some((ref p, _)) = self.preedit else { return vec![local(s, e)]; };
         let (a, b) = self.range();
@@ -115,7 +129,7 @@ impl TextEdit {
             && !p.is_empty()
         {
             let (a, _) = self.range();
-            let ps = (a - self.input_bounds().start) as u32;
+            let ps = self.display_index(a) as u32;
             let pe = ps + p.len() as u32;
             for m in self.active_marks().iter().filter(|m| !m.is_pill()) {
                 push_mark_span(ps, pe, m, &mut spans, &mut strikes, &mut links);
@@ -156,6 +170,39 @@ impl TextEdit {
         (spans, strikes, links, display_blocks)
     }
 
+    /// A projection's decoration styles, shifted past any composition.
+    pub(crate) fn display_decoration_spans(&self) -> Vec<Span> {
+        let Some(p) = self.active_projection() else { return Vec::new() };
+        let shift = match &self.preedit {
+            Some((pre, _)) => {
+                let (da, db) = self.preedit_display_span(p);
+                Some((da, pre.len() as i64 - (db - da) as i64))
+            }
+            None => None,
+        };
+        p.decoration_styles().iter().map(|s| {
+            let mut s = s.clone();
+            if let Some((da, d)) = shift && s.start as usize >= da {
+                s.start = (s.start as i64 + d) as u32;
+                s.end = (s.end as i64 + d) as u32;
+            }
+            s
+        }).collect()
+    }
+
+    /// One [`LineBox`] per displayed line of a projected field: the box of the source line its
+    /// first character comes from. Empty without a projection or line layout.
+    pub(crate) fn display_line_boxes(&self) -> Vec<super::LineBox> {
+        let Some(p) = self.active_projection().filter(|p| p.has_lines()) else { return Vec::new() };
+        let (text, _) = self.display();
+        let mut at = 0;
+        text.split('\n').map(|line| {
+            let source = self.model_index_with(at, super::CollapseSide::After);
+            at += line.len() + 1;
+            p.line_at(source).cloned().unwrap_or_default()
+        }).collect()
+    }
+
     /// Each [`Mark::Pill`]'s byte range in `self.display().0`, with its id.
     pub(crate) fn display_pills(&self) -> Vec<(u32, u32, &str)> {
         if self.secure {
@@ -174,7 +221,7 @@ impl TextEdit {
     }
 
     fn display_blocks(&self, disp_text: &str) -> Vec<Block> {
-        if self.preedit.is_none() {
+        if self.preedit.is_none() && self.active_projection().is_none() {
             let first = self.line_of_byte(self.input_bounds().start);
             let count = 1 + count_newlines(disp_text.as_bytes());
             return (first..first + count).map(|i| self.blocks.get(i).copied().unwrap_or(Block::Paragraph)).collect();
@@ -223,6 +270,13 @@ impl TextEdit {
                 MULTILINE_SECURE_MASK.to_owned()
             };
             return (text, None);
+        }
+        if let Some(proj) = self.active_projection() {
+            let shown = proj.text();
+            let Some((pre, _)) = &self.preedit else { return (shown.to_owned(), None) };
+            let (da, db) = self.preedit_display_span(proj);
+            let s = [&shown[..da], pre.as_str(), &shown[db..]].concat();
+            return (s, Some((da, da + pre.len())));
         }
         match &self.preedit {
             Some((p, _)) => {

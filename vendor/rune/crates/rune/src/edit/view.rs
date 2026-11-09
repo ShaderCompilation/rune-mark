@@ -83,6 +83,47 @@ impl TextEdit {
         });
     }
 
+    /// Show the input range through `projection` (see [`SourceProjection`]). Ignored unless
+    /// it was built for the current range and text.
+    pub(crate) fn set_projection(&mut self, projection: Option<Arc<SourceProjection>>) {
+        self.projection = projection;
+    }
+
+    pub(crate) fn projection(&self) -> Option<Arc<SourceProjection>> {
+        self.projection.clone()
+    }
+
+    /// The projection, while it matches the range and text it was built for. Secure fields and
+    /// unbounded inputs never project.
+    pub(crate) fn active_projection(&self) -> Option<&SourceProjection> {
+        let p = self.projection.as_deref()?;
+        let range = self.input_range.as_ref()?;
+        (!self.secure && p.applies(range, self.text.len())).then_some(p)
+    }
+
+    /// The display span the selection a composition replaces occupies, before the preedit.
+    pub(super) fn preedit_display_span(&self, p: &SourceProjection) -> (usize, usize) {
+        let (a, b) = self.range();
+        (p.to_display(a), p.to_display(b))
+    }
+
+    /// The caret movement Left or Right makes through a projection, or `None` without one.
+    /// Stops come from the displayed text; past its last stop the caret leaves the range.
+    pub(super) fn projected_step(&self, forward: bool) -> Option<usize> {
+        let p = self.active_projection().filter(|_| self.preedit.is_none())?;
+        let r = self.input_bounds();
+        let stop = if forward { p.stop_after(self.focus) } else { p.stop_before(self.focus) };
+        Some(stop.unwrap_or_else(|| {
+            if forward {
+                if r.end < self.text.len() { next_char(&self.text, r.end) } else { r.end }
+            } else if r.start > 0 {
+                prev_char(&self.text, r.start)
+            } else {
+                r.start
+            }
+        }))
+    }
+
     pub(crate) fn input_bounds(&self) -> Range<usize> {
         self.input_range.clone().map_or(0..self.text.len(), |r| {
             let start = Self::clamp_char_boundary(&self.text, r.start);
@@ -142,6 +183,12 @@ impl TextEdit {
 
     /// Map global model bytes to local display bytes, including masking and composition.
     pub(crate) fn display_index(&self, byte: usize) -> usize {
+        if let Some(p) = self.active_projection() {
+            let d = p.to_display(byte);
+            let Some((pre, _)) = &self.preedit else { return d };
+            let (da, db) = self.preedit_display_span(p);
+            return if d <= da { d } else if d < db { da } else { d - (db - da) + pre.len() };
+        }
         let r = self.input_bounds();
         let byte = Self::clamp_char_boundary(&self.text, byte.clamp(r.start, r.end));
         if self.is_hidden_multiline() {
@@ -165,6 +212,20 @@ impl TextEdit {
     }
 
     pub(crate) fn model_index(&self, byte: usize) -> usize {
+        if let Some(p) = self.active_projection() {
+            let Some((pre, _)) = &self.preedit else { return p.to_source(byte) };
+            let (a, b) = self.range();
+            let (da, db) = self.preedit_display_span(p);
+            return if byte < da {
+                p.to_source(byte)
+            } else if byte < da + pre.len() {
+                a
+            } else if byte == da + pre.len() {
+                b
+            } else {
+                p.to_source(byte - pre.len() + (db - da))
+            };
+        }
         let r = self.input_bounds();
         if self.is_hidden_multiline() {
             return r.end;
@@ -188,6 +249,15 @@ impl TextEdit {
             r.start.saturating_add(byte)
         };
         Self::clamp_char_boundary(&self.text, model.min(r.end))
+    }
+
+    /// [`Self::model_index`] choosing `side` where hidden bytes collapse, regardless of the
+    /// projection's own preference (a line's first character is after its hidden prefix).
+    pub(crate) fn model_index_with(&self, byte: usize, side: CollapseSide) -> usize {
+        match self.active_projection() {
+            Some(p) if self.preedit.is_none() => p.to_source_side(byte, side),
+            _ => self.model_index(byte),
+        }
     }
 
     pub(crate) fn display_selection_range(&self, a: usize, b: usize) -> (usize, usize) {

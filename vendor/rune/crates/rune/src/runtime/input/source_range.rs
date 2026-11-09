@@ -5,19 +5,21 @@ impl<S: 'static> Runtime<S> {
     /// Offers a bounded field's key that would act beyond its range to `on_source_range_exit`,
     /// before it applies. True when the app chose to apply it to the whole buffer.
     pub(super) fn offer_source_range_exit(&mut self, ev: &KeyEvent, layout: Option<&Layout<Ink>>, tx: &mut Tx) -> bool {
-        let Some((hook, access, range, single_line)) = self.focused_input().and_then(|i| {
-            Some((i.range_exit.clone()?, i.access.clone()?, i.edit.input_source_range()?, i.single_line))
+        let Some((hook, access, range, single_line, projection)) = self.focused_input().and_then(|i| {
+            Some((i.range_exit.clone()?, i.access.clone()?, i.edit.input_source_range()?, i.single_line, i.edit.projection()))
         }) else {
             return false;
         };
         let exit = {
             // The classifier copies the model only for keys that can leave the range.
             let edit = access(states!(self));
-            let previous = edit.input_source_range();
+            let previous = (edit.input_source_range(), edit.projection());
             edit.set_single_line(single_line);
             edit.set_input_range(Some(range));
+            edit.set_projection(projection);
             let exit = edit.source_range_exit(ev, layout);
-            edit.set_input_range(previous);
+            edit.set_input_range(previous.0);
+            edit.set_projection(previous.1);
             exit
         };
         let Some(exit) = exit else { return false };
@@ -32,6 +34,7 @@ impl<S: 'static> Runtime<S> {
         let access = self.focused_input()?.access.clone()?;
         let mut edit = access(states!(self)).clone();
         edit.set_input_range(None);
+        edit.set_projection(None);
         let s = self.env.scale;
         let n = self.node(&path)?;
         let (mut spec, w) = (n.text.clone()?, n.target[2] - n.target[0] - n.inset[0] - n.inset[2]);
@@ -41,6 +44,7 @@ impl<S: 'static> Runtime<S> {
         spec.strikes.clear();
         spec.blocks.clear();
         spec.soft_breaks.clear();
+        spec.line_boxes.clear();
         Some(self.text.layout_for_spec(&spec, s, spec.wrap.then_some(w * s), line_alignment(&spec)))
     }
 }

@@ -50,9 +50,10 @@ fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::Sta
         edit.break_history_group();
         changed = true;
     }
-    let range = input.edit.input_source_range();
+    let (range, projection) = (input.edit.input_source_range(), input.edit.projection());
     input.edit = edit.clone();
     input.edit.set_input_range(range);
+    input.edit.set_projection(projection);
     changed
 }
 

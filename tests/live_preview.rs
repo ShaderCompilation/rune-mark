@@ -108,11 +108,19 @@ fn clicking_rendered_text_reveals_its_markdown_and_focuses_the_mapped_position()
     let start = source.find("Some").unwrap();
     assert_eq!(active(&rt), Some("Some **bold** text\n"));
     assert_eq!(selection(&rt), (start, start));
-    assert_eq!(displayed(&rt), "Some **bold** text");
+    // The caret does not touch the bold construct, so its delimiters stay hidden.
+    assert_eq!(displayed(&rt), "Some bold text");
     assert!(input(&rt).unwrap().focused);
     assert!(rt.state.editor.focused);
     assert!(has_text(&rt, "Title") && has_text(&rt, "last"));
-    assert!(!has_text(&rt, "Some bold text"));
+    assert!(
+        !rt.elements()
+            .into_iter()
+            .any(|e| e.text.as_deref() == Some("Some bold text")
+                && e.key.as_deref() != Some("markdown-input")
+                && !e.exiting),
+        "the rendered paragraph is replaced by the input"
+    );
 
     // The heading's first rendered character maps past its marker.
     let heading = text_element(&rt, "Title");

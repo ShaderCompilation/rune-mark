@@ -8,7 +8,7 @@
 //! the run's variation coordinates, so one variable font serves every weight.
 
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use crate::runtime::{HashMap as FxHashMap, HashSet as FxHashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -432,7 +432,7 @@ impl TextSystem {
         shape: Option<u64>,
         text: &str,
         spans: &[Span],
-        blocks: &[crate::edit::Block],
+        (blocks, boxes): (&[crate::edit::Block], &[crate::edit::LineBox]),
         pills: &[PillChip],
         style: TextStyle,
         scale: f32,
@@ -443,12 +443,19 @@ impl TextSystem {
     ) -> Rc<Layout<Ink>> {
         self.follow_language();
         let shared = (!cache).then(|| std::mem::replace(&mut self.layout_cx, LayoutContext::new()));
-        let has_indented_blocks = blocks.iter().any(|&b| b != crate::edit::Block::Paragraph);
+        let boxes = if boxes.iter().any(crate::edit::LineBox::has_indent) { boxes } else { &[] };
+        let has_indented_blocks = blocks.iter().any(|&b| b != crate::edit::Block::Paragraph) || !boxes.is_empty();
         // Shaping depends on the text, spans, style, scale, overflow-wrap and pills; line
         // breaking adds the width, alignment and block indents. A layout cached at one width
         // is re-broken at another rather than shaped again.
         let shape_key = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrap_anywhere, pills));
-        let key = hash::break_key(shape_key, max_width, align, has_indented_blocks.then_some(blocks));
+        let mut key = hash::break_key(shape_key, max_width, align, has_indented_blocks.then_some(blocks));
+        if !boxes.is_empty() {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            boxes.iter().for_each(|b| b.hash_layout(&mut h));
+            key = h.finish();
+        }
         let g = self.generation;
         if cache && let Some(Entry { value: l, used, .. }) = self.layouts.get_mut(&key) {
             *used = g;
@@ -472,7 +479,7 @@ impl TextSystem {
             .collect();
         let break_lines = |layout: &mut Layout<Ink>| {
             if has_indented_blocks || !pills.is_empty() {
-                break_lines_with_blocks(layout, blocks, style.size, scale, max_width);
+                break_lines_with_blocks(layout, blocks, boxes, style.size, scale, max_width);
             } else {
                 layout.break_all_lines(max_width);
             }

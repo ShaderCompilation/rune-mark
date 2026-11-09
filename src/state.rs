@@ -5,6 +5,7 @@ use rune::{Key, KeyEvent, SourceRangeExit, TextEdit};
 use rune_kit::markdown::SourceClick;
 
 use crate::markdown::{BlockMetadata, ParsedDocument};
+use crate::reveal::{Focus, Reveal};
 use crate::zoom::Zoom;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,6 +107,17 @@ impl State {
     pub fn regions(&self) -> Ref<'_, [rune_kit::markdown::SourceRegion]> {
         self.sync_document();
         Ref::map(self.parsed.borrow(), ParsedDocument::regions)
+    }
+
+    /// The syntax Live Preview reveals for the current caret or selection; nothing while the
+    /// editor is unfocused. Uses the cached syntax, so a caret move parses nothing.
+    pub fn reveal(&self) -> Reveal {
+        self.sync_document();
+        let focus = self.editor.focused.then_some(Focus {
+            anchor: self.editor.anchor,
+            head: self.editor.focus,
+        });
+        self.parsed.borrow().reveal(focus)
     }
 
     /// Change mode without touching the editor. Source mode has no active region; returning to

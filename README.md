@@ -1,10 +1,12 @@
 # Rune Markdown scratchpad
 
 A small native Rust prototype for editing Markdown in place. The window opens in
-**Live Preview**: one scrolling document where the block you click shows its
-Markdown source. A toolbar toggle switches between three views:
+**Live Preview**: one scrolling document where the block you click becomes
+editable in place, keeping its rendered look. A toolbar toggle switches between
+three views:
 
-- **Live Preview** (default): rendered blocks, with the active block as source.
+- **Live Preview** (default): rendered blocks; the active block stays styled and
+  shows only the Markdown syntax the caret reaches.
 - **Source**: the whole document as plain source, in the same scroll container.
 - **Split**: the source on the left and a selectable rendered preview on the
   right, each scrolling on its own.
@@ -23,7 +25,7 @@ saved.
 
 The sample is embedded at build time. Edit or paste over it; the preview reads
 the same editor buffer on every edit. Nothing is saved when the app closes.
-The source editor is plain monospace text with wrapping, clipboard operations,
+The Source view is plain monospace text with wrapping, clipboard operations,
 and Rune's standard undo/redo. The preview allows text selection and copying.
 
 ## Run
@@ -183,6 +185,36 @@ interaction without creating per-block buffers or history:
   clicks wait. A deferred click applies after the composition commits (rebased past
   the committed text) or cancels.
 
+### Styled editing and syntax reveal
+
+The active region keeps its blocks' look while edited: heading type, inline bold,
+italic, code chips, links and strikethrough, highlighted code inside its frame,
+list marker columns with hanging indents, and quote rules. `src/reveal.rs` decides
+which syntax shows for the caret or selection; everything else stays hidden.
+Revealing or hiding changes no text, selection or history.
+
+- Rune's `SourceProjection` (`El::source_projection`) maps the bounded source
+  range to what the field draws: hidden syntax, decoded entities, generated text
+  (inline-code padding) and per-line layout (`LineBox`: indents, quote rules,
+  gutter bullets/numbers/task boxes, code frames). Layout, clicks, drag selection,
+  caret and selection geometry, Left/Right, Up/Down and accessibility all go
+  through it. Where hidden bytes collapse, a click lands on the side the syntax
+  prefers (an opening delimiter's content side); Left/Right stop on the near side,
+  which reveals the syntax before the caret enters it.
+- Rune Kit's `markdown::editable` builds the projection and spans from the same
+  cached parse and style rules as the renderer, including the fence language and
+  highlighter. A lone heading or code block uses its own base type and frame.
+- `State::editor` stays the only buffer, selection, composition and history. The
+  projection is rebuilt on every render from the reveal policy; composition keeps
+  the caret, so the syntax around it stays as it was until it commits or cancels.
+
+Limits: vertical spacing inside a multi-block region (list item gaps, paragraph
+margins in quotes) is not reproduced, so an activated list or quote is slightly
+tighter than rendered. Soft line breaks inside a paragraph show as line breaks.
+Nested code in lists or quotes is framed but not highlighted. A list's gutter task
+box is drawn as a plain box. Tables, rules and diagrams still show their whole
+source when active.
+
 Rune reports keys that would leave the bounded input through
 `El::on_source_range_exit`, before they apply. Rune decides what would leave the
 range using the field's layout; the app decides what happens next.
@@ -217,6 +249,13 @@ links and task markers; typing, Enter, paste and deletion; adjacent-block arrows
 with column retention; Source switches for Shift-navigation, Select All and boundary
 deletions; undo/redo; and deferred clicks around composition commit and cancel.
 They do not substitute for native input checks.
+
+Projection tests (`tests/projection.rs`) cover hidden ranges, collapsed-boundary
+sides, replacements, decorations, caret stops and UTF-8. Editable-presentation tests
+(`tests/editable_presentation.rs`) cover heading metrics and marker reveal, arrow
+reveal without history entries, pointer hits through hidden syntax, wrapped
+navigation, composition inside revealed syntax, accessibility, entities and
+escapes, code fences in their frame, and list and quote markers.
 
 Mode tests (`tests/modes.rs`) drive the full window: the Live Preview default and
 toggle, Ctrl/Cmd+E with and without focus, history across switches, selection

@@ -51,6 +51,7 @@ use crate::Kit;
 
 mod autolink;
 mod cache;
+mod editable;
 mod find;
 mod highlight;
 mod interrupt;
@@ -63,6 +64,7 @@ mod style;
 mod syntax;
 mod table;
 
+pub use editable::{Editable, editable};
 pub use find::{Case, find};
 pub use style::MarkdownStyle;
 #[cfg(feature = "mermaid")] pub(crate) use style::DiagramPaint;

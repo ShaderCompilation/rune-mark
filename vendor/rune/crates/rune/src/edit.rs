@@ -24,6 +24,9 @@ mod keys;
 pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
 mod marks;
 mod model;
+mod projection;
+pub use projection::{CollapseSide, LineBox, LineMarker, ProjectionBuilder, SourceProjection};
+pub(crate) use projection::MarkerKind;
 mod view;
 pub use view::SourceRangeExit;
 pub use model::{Block, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphInfo, RichStyle};
@@ -69,6 +72,8 @@ pub struct TextEdit {
     line_mode: LineMode,
     /// Transient input-view mapping; never included in undo snapshots.
     input_range: Option<Range<usize>>,
+    /// Transient display projection of `input_range`; never included in undo snapshots.
+    projection: Option<Arc<SourceProjection>>,
     /// Formatting keys and rich paste are on (see [`TextEdit::rich`]).
     rich: bool,
     /// The mark kinds this field keeps, one bit per [`Mark::kind_order`]; `None` keeps all.
@@ -118,6 +123,7 @@ impl std::hash::Hash for TextEdit {
         self.revealed.hash(h);
         self.is_single_line().hash(h);
         self.input_range.hash(h);
+        self.projection.hash(h);
     }
 }
 
@@ -169,6 +175,7 @@ impl TextEdit {
             revealed: false,
             line_mode: LineMode::Default,
             input_range: None,
+            projection: None,
             rich: false,
             allowed_marks: None,
             allowed_blocks: None,

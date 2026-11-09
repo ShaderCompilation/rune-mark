@@ -292,8 +292,15 @@ impl Renderer {
                     self.skip_block(&blocks[i]);
                 }
                 if let Some(view) = editor.take() {
-                    root = root
-                        .child(col().key("source-editor").w_full().transition(rune::Transition::none()).child(view));
+                    // The editor keeps the margin its first block had when rendered.
+                    let first = replaced_regions.clone().unwrap_or_default().find_map(|k| regions[k].block_index);
+                    let top = match first {
+                        Some(i) if !first_block => render::margins(&blocks[i], &self.s).0.max(prev_mb),
+                        _ => 0.0,
+                    };
+                    root = root.child(
+                        col().key("source-editor").w_full().mt(top).transition(rune::Transition::none()).child(view),
+                    );
                 }
                 if let Some(i) = region.block_index {
                     prev_mb = render::margins(&blocks[i], &self.s).1;

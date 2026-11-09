@@ -82,6 +82,55 @@ fn block_key(i: usize, keys: &[String], used: &mut Vec<String>) -> String {
     cand
 }
 
+/// The span an inline style draws with over `r` at base size `base`, inside the link span
+/// `in_link` if any. `None` for styles drawn otherwise (strikethrough lines, links' own spans)
+/// or not at all. Shared by rendered blocks and the editable presentation.
+pub(super) fn inline_style_span(s: &MarkdownStyle, st: Style, r: Range<usize>, base: f32, in_link: Option<&Span>) -> Option<Span> {
+    let mut sp = Span::new(r.start, r.end);
+    // Code in a link is a chip in the link's colour, not underlined as well.
+    let no_line = in_link.is_some_and(|l| l.underline.is_some()).then_some(Color::TRANSPARENT);
+    match st {
+        Style::Code => {
+            let link_base = in_link.and_then(|l| l.size).unwrap_or(base);
+            sp.mono = true;
+            sp.weight = Some(s.inline_code_weight);
+            sp.size = Some(link_base * s.inline_code_scale);
+            sp.underline = no_line;
+            if in_link.is_none_or(|l| l.bg.is_none()) {
+                sp = sp.bg(s.code_bg, s.inline_code_pad);
+            }
+        }
+        Style::CodePad if no_line.is_none() => return None,
+        Style::CodePad => sp.underline = no_line,
+        Style::Strong => sp.weight = Some(s.strong_weight),
+        Style::Em => sp.italic = true,
+        Style::Strike | Style::Link => return None,
+    }
+    Some(sp)
+}
+
+/// A link's default span, without an app's [`Markdown::link_look`].
+pub(super) fn default_link_span(s: &MarkdownStyle, r: Range<usize>) -> Span {
+    Span { color: Some(s.accent), underline: Some(s.link_underline), ..Span::new(r.start, r.end) }
+}
+
+/// A heading's text style and colour for its parsed level.
+pub(super) fn heading_style(s: &MarkdownStyle, level: u8) -> (TextStyle, Color) {
+    (s.headings[(level as usize).clamp(1, 3) - 1], if level >= 4 { s.muted } else { s.text })
+}
+
+/// A code block's frame, holding the code (or, while it is edited, its source) as `body`.
+pub(super) fn code_frame(s: &MarkdownStyle, body: El, scroll_wide: bool) -> El {
+    let frame = col().role("code").w_full().radius(6.0).fill(s.code_block_fill).border(0.5, s.code_block_border);
+    if scroll_wide {
+        // The text sizes to its longest line inside the viewport, which scrolls under the
+        // padding so lines run to the frame's edge.
+        return frame.child(col().key("scroll").w_full().scroll_x().scroll_edge_fade(12.0)
+            .child(col().px(s.code_block_pad[0]).py(s.code_block_pad[1]).child(body)));
+    }
+    frame.px(s.code_block_pad[0]).py(s.code_block_pad[1]).child(body.w_full())
+}
+
 /// (margin-top, margin-bottom) per block, collapsed like CSS margins.
 pub(super) fn margins(b: &Block, s: &MarkdownStyle) -> (f32, f32) {
     match b {
@@ -154,31 +203,8 @@ impl Renderer {
                 out.insert(at, sp);
                 continue;
             }
-            if matches!(st, Style::Strike) {
-                continue;
-            }
             let in_link = links.iter().find(|l| l.start <= a as u32 && b as u32 <= l.end);
-            let mut sp = Span::new(a, b);
-            // Code in a link is a chip in the link's colour, not underlined as well.
-            let no_line = in_link.is_some_and(|l| l.underline.is_some()).then_some(Color::TRANSPARENT);
-            match st {
-                Style::Code => {
-                    let link_base = in_link.and_then(|l| l.size).unwrap_or(base);
-                    sp.mono = true;
-                    sp.weight = Some(s.inline_code_weight);
-                    sp.size = Some(link_base * s.inline_code_scale);
-                    sp.underline = no_line;
-                    if in_link.is_none_or(|l| l.bg.is_none()) {
-                        sp = sp.bg(s.code_bg, s.inline_code_pad);
-                    }
-                }
-                Style::CodePad if no_line.is_none() => continue,
-                Style::CodePad => sp.underline = no_line,
-                Style::Strong => sp.weight = Some(s.strong_weight),
-                Style::Em => sp.italic = true,
-                Style::Strike | Style::Link => unreachable!(),
-            }
-            out.push(sp);
+            out.extend(inline_style_span(s, st, a..b, base, in_link));
         }
         out
     }
@@ -277,14 +303,7 @@ impl Renderer {
         let highlights = self.text_highlights_for(code, map);
         let body = self.with_reveal(tabbed(code, self.syntax_spans(code, source), highlights, s.code_block).font(s.code_block).color(s.text));
         let body = self.click_text(body, code, map, 0, !matches!(s.code_block.family, Family::Mono | Family::SystemMono));
-        let frame = col().role("code").w_full().radius(6.0).fill(s.code_block_fill).border(0.5, s.code_block_border);
-        if self.scroll_wide {
-            // The text sizes to its longest line inside the viewport, which scrolls under the
-            // padding so lines run to the frame's edge.
-            return frame.child(col().key("scroll").w_full().scroll_x().scroll_edge_fade(12.0)
-                .child(col().px(s.code_block_pad[0]).py(s.code_block_pad[1]).child(self.select(body))));
-        }
-        frame.px(s.code_block_pad[0]).py(s.code_block_pad[1]).child(self.select(body.w_full()))
+        code_frame(s, self.select(body), self.scroll_wide)
     }
 
     /// Colour-only spans, so highlighting never moves a glyph: a block streaming in draws its
@@ -428,7 +447,10 @@ impl Renderer {
         };
         match b {
             Block::Para(inl) => self.para(inl, inl_map, s.body, s.text),
-            Block::Heading(l, inl) => self.para(inl, inl_map, s.headings[(*l as usize - 1).min(2)], if *l >= 4 { s.muted } else { s.text }).role("heading").level(u32::from(*l)),
+            Block::Heading(l, inl) => {
+                let (font, color) = heading_style(s, *l);
+                self.para(inl, inl_map, font, color).role("heading").level(u32::from(*l))
+            }
             Block::Code(code) => {
                 let n = self.next_source.get();
                 self.next_source.set(n + 1);

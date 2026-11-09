@@ -53,6 +53,8 @@ pub struct TextSpec {
     pub(crate) highlights: Vec<crate::text::TextHighlight>,
     /// Per-paragraph [`Block`](crate::Block) attributes for `content`.
     pub(crate) blocks: Vec<crate::edit::Block>,
+    /// Per displayed line layout of a projected field (see [`LineBox`](crate::LineBox)).
+    pub(crate) line_boxes: Vec<crate::edit::LineBox>,
     /// Line indices (`> 0`) created by `Shift+Return` (`<br>`).
     pub(crate) soft_breaks: Vec<u32>,
     /// Visual palette for rich block and inline decorations.
@@ -178,6 +180,7 @@ impl TextSpec {
         self.rings.clear();
         self.strikes.clear();
         self.blocks.clear();
+        self.line_boxes.clear();
         self.soft_breaks.clear();
         self.pills.clear();
         self.uncopied.clear();

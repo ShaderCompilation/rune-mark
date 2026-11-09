@@ -1,5 +1,6 @@
 //! Source input, Live Preview presentation and the view toggle over the one document editor.
 use rune::{El, Key, KeyEvent, SourceRangeExit, TextStyle, Tx, row, text, text_input};
+use rune_kit::markdown::{MarkdownStyle, editable};
 use rune_kit::{Kit, Markdown};
 
 use crate::state::{EditingMode, SourceLayout, State};
@@ -146,6 +147,8 @@ pub fn view_toggle(state: &State, kit: &Kit) -> El {
 
 /// The shared input: the whole document in Source mode, or the active region's Markdown in
 /// Live Preview. Both bind the same `State::editor`, so text, selection and history are shared.
+/// In Live Preview the region keeps its rendered look: syntax the caret has not revealed is
+/// hidden through a display projection, and styles come from the Markdown renderer's rules.
 pub fn source_input(state: &State, kit: &Kit) -> El {
     let input = text_input(&state.editor, TextStyle::new(14.0, 400.0).mono().lh(22.0))
         .key("markdown-input")
@@ -185,7 +188,12 @@ pub fn source_input(state: &State, kit: &Kit) -> El {
             state.sync_document();
         });
     match state.input_range() {
-        Some(range) => input.source_range(range),
+        Some(range) => {
+            let reveal = state.reveal();
+            let style = MarkdownStyle::from_kit(kit);
+            editable(&state.editor.text, range.clone(), &reveal.ranges, &style)
+                .apply(input.source_range(range))
+        }
         None => input.min_h(64.0),
     }
 }

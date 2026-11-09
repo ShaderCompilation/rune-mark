@@ -19,6 +19,23 @@ impl El {
         self
     }
 
+    /// Show the bounded range ([`El::source_range`], which must be set first) through a
+    /// [`SourceProjection`](crate::SourceProjection): hidden source bytes, transformed text,
+    /// generated decorations and per-line layout. The model stays the only buffer, selection,
+    /// composition and history; layout, hit testing, drag selection, caret and selection
+    /// geometry, Left/Right movement and accessibility all map through the projection. Spans
+    /// from [`El::spans`] keep source offsets and follow it. A projection built for another
+    /// range or text revision is ignored.
+    pub fn source_projection(mut self, projection: crate::SourceProjection) -> Self {
+        if let Some(input) = &mut self.input {
+            input.edit.set_projection(Some(std::sync::Arc::new(projection)));
+            if let Some(text) = &mut self.text { text.replace_content(input.edit.display().0); }
+            self.sync_input_pills();
+            self.sync_input_rich();
+        }
+        self
+    }
+
     /// Called before a bounded input ([`El::source_range`]) applies a key that would act beyond
     /// its range: navigation leaving it, Select All, or a deletion crossing its edge (see
     /// [`SourceRangeExit`](crate::SourceRangeExit)). Return true to apply that key to the whole
@@ -206,11 +223,13 @@ impl El {
     pub(crate) fn sync_input_rich(&mut self) {
         let (Some(inp), Some(t)) = (&self.input, &mut self.text) else { return };
         t.rich_style = inp.rich_style;
-        if inp.edit.is_plain() && inp.decorations.is_empty() {
+        let projected = inp.edit.active_projection().is_some();
+        if inp.edit.is_plain() && inp.decorations.is_empty() && !projected {
             // A plain field lays out and draws exactly as before rich editing existed.
             t.spans.clear();
             t.strikes.clear();
             t.blocks.clear();
+            t.line_boxes.clear();
             t.soft_breaks.clear();
             t.pills.clear();
             return;
@@ -225,6 +244,7 @@ impl El {
                 base_spans.push(sp);
             }
         }
+        base_spans.extend(inp.edit.display_decoration_spans());
         let pill_fg = t.pill_colors.and_then(|(_, fg)| fg);
         base_spans.extend(t.pills.iter().filter_map(|p| {
             Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
@@ -237,7 +257,8 @@ impl El {
         }
         t.spans = flat;
         t.strikes = strikes;
-        t.blocks = blocks;
+        t.blocks = if projected { Vec::new() } else { blocks };
+        t.line_boxes = inp.edit.display_line_boxes();
         t.soft_breaks = inp.edit.display_soft_breaks();
         // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
         t.links = rich_links;
