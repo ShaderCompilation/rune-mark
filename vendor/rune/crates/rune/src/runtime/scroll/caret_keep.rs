@@ -10,16 +10,32 @@ pub(crate) enum CaretKeep {
     Press,
     /// Where the last frame showed the caret, if its viewport showed it.
     Caret,
+    /// Where the last frame's layout would show the caret's new position: a projected field
+    /// (`El::source_projection`) whose syntax reveal reshapes it as the caret moves. Only
+    /// when the text is unchanged and that place is in the viewport.
+    Layout,
 }
 
 impl<S: 'static> Runtime<S> {
     /// Before a commit: the window height the caret line's middle should keep.
-    pub(super) fn capture_caret_keep(&self, tx: &mut Tx) -> Option<f32> {
+    pub(super) fn capture_caret_keep(&mut self, tx: &mut Tx) -> Option<f32> {
         match tx.keep_caret.take()? {
             CaretKeep::Press => Some(self.press_at.1),
-            CaretKeep::Caret => {
+            keep => {
                 let i = self.focused_index()?;
-                let r = self.caret_rect(&self.nodes, i)?;
+                let r = if keep == CaretKeep::Layout {
+                    let inp = self.nodes[i].input.as_ref()?;
+                    let (access, mut edit) = (inp.access.clone()?, inp.edit.clone());
+                    edit.projection()?;
+                    let model = access(states!(self));
+                    if model.text != edit.text || model.preedit.is_some() || !model.focused {
+                        return None;
+                    }
+                    (edit.anchor, edit.focus) = (model.anchor, model.focus);
+                    self.caret_rect_with(&self.nodes, i, Some(&edit))?
+                } else {
+                    self.caret_rect(&self.nodes, i)?
+                };
                 let v = self.viewport_of(i)?;
                 let [_, top, _, bottom] = self.nodes[v].target;
                 let mid = r[1] + r[3] * 0.5;
@@ -50,6 +66,38 @@ impl<S: 'static> Runtime<S> {
         if self.virtual_window_changed() {
             self.commit(&Tx { instant: true, ..Tx::default() });
             self.step_scroll(0.0);
+        }
+    }
+}
+
+impl<S: 'static> Runtime<S> {
+    /// After a commit that followed an Up or Down leaving a projected field
+    /// ([`super::source_range`]): put the caret on the line it reached at the x it left from,
+    /// using the newly focused field's own layout, and commit again for any reveal that changes.
+    pub(super) fn apply_caret_goal(&mut self) {
+        let Some(x) = self.source_range.goal.take() else { return };
+        self.source_range.sticky = None;
+        // Where the caret lands can reveal or hide syntax on its line, moving the text under
+        // it: place it again on the new layout until it stays put (a few passes at most).
+        for _ in 0..3 {
+            let Some(i) = self.focused_index() else { return };
+            let Some(inp) = self.nodes[i].input.as_ref() else { return };
+            if inp.edit.projection().is_none() || inp.edit.preedit.is_some() {
+                return;
+            }
+            let Some(access) = inp.access.clone() else { return };
+            let bounds = inp.edit.input_bounds();
+            let Some(to) = self.caret_line_index_at(i, x) else { return };
+            let e = access(states!(self));
+            if e.preedit.is_some() || e.anchor != e.focus || !(bounds.start..=bounds.end).contains(&to) {
+                return;
+            }
+            self.source_range.sticky = Some((x, to));
+            if e.focus == to {
+                return;
+            }
+            e.set_caret(to);
+            self.commit(&Tx { instant: true, ..Tx::default() });
         }
     }
 }

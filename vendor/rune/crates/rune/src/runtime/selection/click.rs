@@ -217,6 +217,9 @@ impl<S: 'static> Runtime<S> {
         let scroll = self.input_scroll.get(&path).copied().unwrap_or(0.0);
         let view = &self.node(&path).unwrap().input.as_ref().unwrap().edit;
         let bounds = view.input_bounds();
+        // A press or drag in a projected field can reveal syntax that reshapes it: the caret
+        // stays where the layout it was placed from draws it.
+        let projected = view.projection().is_some();
         let unit = match step {
             Step::Down { clicks: 2, .. } => Unit::Word,
             Step::Down { clicks: 3.., .. } => Unit::Paragraph,
@@ -252,6 +255,9 @@ impl<S: 'static> Runtime<S> {
                         e.set_view_selection(origin.0, origin.1, bounds);
                     }
                 }
+                if projected && one.keep_caret.is_none() {
+                    one.keep_caret = Some(crate::runtime::CaretKeep::Layout);
+                }
                 one.instant = true;
                 true
             }
@@ -274,6 +280,9 @@ impl<S: 'static> Runtime<S> {
                     return false;
                 }
                 e.break_history_group();
+                if projected && one.keep_caret.is_none() {
+                    one.keep_caret = Some(crate::runtime::CaretKeep::Layout);
+                }
                 one.instant = true;
                 true
             }

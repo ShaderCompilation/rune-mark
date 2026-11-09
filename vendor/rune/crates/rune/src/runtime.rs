@@ -641,6 +641,8 @@ pub struct Runtime<S: 'static> {
     sel_heard: selectable::Heard,
     /// Multi-click and drag selection state for `text_input`.
     input_click: input_click::InputClick,
+    /// A vertical move out of a bounded, projected field, waiting to land at its x.
+    source_range: source_range::SourceRangeMove,
     /// Modifier keys held now, as the window last reported them (`Tx::mods`).
     held_mods: crate::Mods,
     /// `El::help` tooltips.
@@ -974,6 +976,7 @@ impl<S: 'static> Runtime<S> {
             sel_snapshot: Default::default(),
             sel_heard: Default::default(),
             input_click: Default::default(),
+            source_range: Default::default(),
             held_mods: Default::default(),
             help: Default::default(),
             help_delay: 0.5,

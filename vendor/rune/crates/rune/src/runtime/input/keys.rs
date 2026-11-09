@@ -61,8 +61,10 @@ impl<S: 'static> Runtime<S> {
         if input_handles {
             let mut layout = self.focused_layout();
             // A bounded field asks the app before a key leaves its range; a yes applies it whole.
-            let unbounded = self.offer_source_range_exit(ev, layout.as_deref(), one);
+            let exit = self.offer_source_range_exit(ev, layout.as_deref(), one);
+            let unbounded = !matches!(exit, source_range::ExitKey::Bounded);
             if unbounded { layout = self.focused_unbounded_layout(); }
+            let line = if let source_range::ExitKey::Line(to) = exit { Some(to) } else { None };
             // A rich field copies its selection's formatting too, read before a cut removes it.
             let mut html = None;
             let copies = matches!(ev.key, crate::edit::Key::Command('c' | 'x'));
@@ -70,6 +72,10 @@ impl<S: 'static> Runtime<S> {
                 let e = access(state);
                 if copies && e.is_rich() && !e.is_secure() {
                     html = Some(e.selected_html()).filter(|h| !h.is_empty());
+                }
+                if let Some(to) = line {
+                    e.set_caret(to);
+                    return EditOutcome::default();
                 }
                 e.key(ev, layout.as_deref())
             }, one);
@@ -182,22 +188,31 @@ impl<S: 'static> Runtime<S> {
         };
         let Some(access) = access else { return false };
         self.input_click.clear_last();
+        let projection_set;
         {
             let edit = access(states!(self));
             edit.set_single_line(single_line);
             edit.set_input_range(input_range);
             edit.set_projection(projection);
+            projection_set = edit.active_projection().is_some();
             if secure && !edit.is_secure() { edit.set_secure(true); }
             if let Some(rev) = revealed_override { edit.set_revealed(rev); }
         }
         let before = change.as_ref().map(|_| zeroize::Zeroizing::new(access(states!(self)).text.clone()));
+        let before_text = projection_set.then(|| access(states!(self)).text.clone());
         let composing = access(states!(self)).preedit.is_some();
+        let projected = projection_set;
         let mut out = f(states!(self), &access, tx);
         // Submit and Escape's blur act once per press; held keys still type, move and delete.
         if tx.key_repeat { out.submit = false; out.blur = false; }
         // Typing is the user's own hand: no animation.
         tx.instant = !animate_layout;
         self.caret_follow = true;
+        // A projected field reshapes as its caret reveals syntax: unless the edit changed the text
+        // or something else holds the caret, keep it where the old layout would draw it.
+        if projected && tx.keep_caret.is_none() && before_text.as_deref() == Some(access(states!(self)).text.as_str()) {
+            tx.keep_caret = Some(crate::runtime::CaretKeep::Layout);
+        }
         if let Some(change) = change
             && before.as_ref().map(|s| s.as_str()) != Some(access(states!(self)).text.as_str())
         {

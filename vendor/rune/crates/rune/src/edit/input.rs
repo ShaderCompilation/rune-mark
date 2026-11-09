@@ -219,6 +219,15 @@ impl TextEdit {
                 let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { self.projected_step(true).unwrap_or_else(|| next_char(&self.text, self.focus)) };
                 self.move_h(i, m.shift);
             }
+            // A projected field's lines are its displayed lines: Home and End go to their edges.
+            Key::Home if self.active_projection().is_some() => {
+                let i = self.line_edge(layout, false);
+                self.set(i, m.shift)
+            }
+            Key::End if self.active_projection().is_some() => {
+                let i = self.line_edge(layout, true);
+                self.set(i, m.shift)
+            }
             Key::Home => self.set(self.input_bounds().start, m.shift),
             Key::End => {
                 let n = self.input_bounds().end;

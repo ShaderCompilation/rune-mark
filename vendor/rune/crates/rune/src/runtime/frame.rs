@@ -475,6 +475,7 @@ impl<S: 'static> Runtime<S> {
                     #[cfg(debug_assertions)]
                     { let check = self.live_check.take(); self.compare_live_check(check); ran_other = false; }
                     self.apply_keeps();
+                    self.apply_caret_goal();
                     self.apply_caret_keep(caret_keep);
                     ran = false;
                 }
@@ -559,6 +560,7 @@ impl<S: 'static> Runtime<S> {
             #[cfg(debug_assertions)]
             { let check = self.live_check.take(); self.compare_live_check(check); }
             self.apply_keeps();
+            self.apply_caret_goal();
             self.apply_caret_keep(caret_keep);
         }
         #[cfg(debug_assertions)]

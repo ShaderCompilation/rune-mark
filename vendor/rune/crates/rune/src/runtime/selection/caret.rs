@@ -33,9 +33,29 @@ impl<S: 'static> Runtime<S> {
     /// Node `i`'s caret line `[x, y, w, h]` in window points at its laid-out place, after
     /// scrolling and sticky shifts, if it is a focused text field.
     pub(super) fn caret_rect(&self, nodes: &[Node], i: usize) -> Option<[f32; 4]> {
+        self.caret_rect_with(nodes, i, None)
+    }
+
+    /// [`Self::caret_rect`] for `edit`'s caret instead of the one node `i` was built with,
+    /// placed in node `i`'s current layout (so where that layout would draw it).
+    pub(super) fn caret_rect_with(&self, nodes: &[Node], i: usize, edit: Option<&crate::edit::TextEdit>) -> Option<[f32; 4]> {
         let n = &nodes[i];
         let (inp, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
-        if !inp.edit.focused { return None; }
+        let edit = edit.unwrap_or(&inp.edit);
+        if !edit.focused { return None; }
+        let s = self.env.scale;
+        let (x, y) = self.text_origin(nodes, i)?;
+        let cur = Cursor::from_byte_index(layout, caret_index(edit, &spec.content), Affinity::Downstream);
+        let bb = crate::text::cursor_geometry(&cur, layout, 1.5 * s);
+        let h = if bb.y1 > bb.y0 { (bb.y1 - bb.y0) as f32 / s } else { spec.style.line_px() };
+        Some([x + bb.x0 as f32 / s, y + bb.y0 as f32 / s, 1.5, h])
+    }
+
+    /// Where text field `i`'s layout origin sits in window points, after scrolling, sticky
+    /// shifts and a single-line field's own scroll.
+    fn text_origin(&self, nodes: &[Node], i: usize) -> Option<(f32, f32)> {
+        let n = &nodes[i];
+        let (inp, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
         let s = self.env.scale;
         let t = sticky::anchored_target(nodes, &self.scrolls, i, self.viewport);
         let y = t[1] + self.stack_row_dy(nodes, i);
@@ -46,10 +66,21 @@ impl<S: 'static> Runtime<S> {
             let prev = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
             x -= single_line_offset(prev, inp, &spec.content, layout, s, (x1 - x0) * s) / s;
         }
+        Some((x, y + n.inset[1]))
+    }
+
+    /// The source position on focused field `i`'s caret line nearest window x `x`: where a
+    /// vertical move arriving at that line lands.
+    pub(super) fn caret_line_index_at(&self, i: usize, x: f32) -> Option<usize> {
+        let n = &self.nodes[i];
+        let (inp, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
+        let s = self.env.scale;
+        let (ox, _) = self.text_origin(&self.nodes, i)?;
         let cur = Cursor::from_byte_index(layout, caret_index(&inp.edit, &spec.content), Affinity::Downstream);
-        let bb = crate::text::cursor_geometry(&cur, layout, 1.5 * s);
-        let h = if bb.y1 > bb.y0 { (bb.y1 - bb.y0) as f32 / s } else { spec.style.line_px() };
-        Some([x + bb.x0 as f32 / s, y + n.inset[1] + bb.y0 as f32 / s, 1.5, h])
+        let bb = crate::text::cursor_geometry(&cur, layout, 0.0);
+        let mid = ((bb.y0 + bb.y1) * 0.5) as f32;
+        let at = crate::text::cursor_from_point(layout, (x - ox) * s, mid).index();
+        Some(inp.edit.model_index(at))
     }
 
     /// After an edit, scrolls the focused field's nearest scroll viewport on each axis just far

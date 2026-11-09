@@ -354,3 +354,16 @@ fn quote_prefixes_hide_and_wrapped_lines_keep_the_quote_indent() {
         "quoted line that wraps across lines here\n> second"
     );
 }
+
+#[test]
+fn hidden_fences_inside_lists_and_quotes_take_their_whole_lines() {
+    // A closing fence inside a container follows the container's prefix; hiding it must take
+    // the line break before that prefix too, or an empty line would be left in its place.
+    let source = "- item\n  ```rust\n  let x = 1;\n  ```\n- next\n";
+    let rt = runtime(source, Some(source.find("item").unwrap() + 2));
+    assert_eq!(displayed(&rt), "item\nlet x = 1;\nnext");
+
+    let source = "> quoted\n> ```\n> code\n> ```\n> after\n";
+    let rt = runtime(source, Some(source.find("quoted").unwrap() + 2));
+    assert_eq!(displayed(&rt), "quoted\ncode\nafter");
+}

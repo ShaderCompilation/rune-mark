@@ -173,9 +173,11 @@ interaction without creating per-block buffers or history:
   newline belongs to the next region: Enter at the end of a block renders the block
   and continues on the new blank line.
 - **Arrows.** Up on the first line, Down on the last, Left at the start or Right at
-  the end moves into the adjacent region, which then activates. Vertical movement
-  keeps its horizontal position because the key applies to the whole document's
-  layout. Shift-selection stays within the block.
+  the end moves into the adjacent region, which then activates. Up and Down keep the
+  caret's place on screen: it lands at the same x in the next region's styled line
+  (a heading's larger type, hidden syntax), and keeps that column through blank
+  lines. Home and End go to the ends of the displayed line. Shift-selection stays
+  within the block.
 - **Source switches.** Shift-navigation beyond the block, Select All and deletions
   across its boundary (Backspace at its start, Delete at its end) switch to Source
   mode, then apply once to the whole document.
@@ -208,12 +210,30 @@ Revealing or hiding changes no text, selection or history.
   projection is rebuilt on every render from the reveal policy; composition keeps
   the caret, so the syntax around it stays as it was until it commits or cancels.
 
+- Revealing is recomputed on every render from the caret and selection: clicks,
+  arrows, Home/End, drags, Shift-selection, edits, undo/redo and a finished
+  composition. Moving the caret never reparses the Markdown or reruns the code
+  highlighter; both are cached by source text (`tests/reveal_navigation.rs` checks
+  that the cached results are reused).
+- Navigation follows the displayed lines (see **Arrows** above). Moving between
+  regions, Rune moves the caret to the line just beyond the region, then places it
+  at the original x in the next region's own layout, repeating while landing reveals
+  or hides syntax on that line.
+- When reveal reshapes the region (a code fence appearing above the caret, a marker
+  taking space), keys, clicks and drags inside it keep the caret where the previous
+  layout drew it, scrolling the document to compensate. Text that genuinely reflows
+  sideways is not held. A drag keeps its source anchor while the layout changes.
+- Breaking syntax (deleting a delimiter, an unclosed fence) reparses the document:
+  the broken construct shows as editable source and other blocks keep their style.
+
 Limits: vertical spacing inside a multi-block region (list item gaps, paragraph
 margins in quotes) is not reproduced, so an activated list or quote is slightly
 tighter than rendered. Soft line breaks inside a paragraph show as line breaks.
 Nested code in lists or quotes is framed but not highlighted. A list's gutter task
 box is drawn as a plain box. Tables, rules and diagrams still show their whole
-source when active.
+source when active. A list's source range can run on through reference definitions
+that follow it, so these show as source while that list is open. Up and Down inside
+one region don't keep a column across a short line; only moves between regions do.
 
 Rune reports keys that would leave the bounded input through
 `El::on_source_range_exit`, before they apply. Rune decides what would leave the
@@ -228,6 +248,7 @@ CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_INCREMENTAL=fal
 CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo build --offline --locked
 mkdir -p artifacts
 target/debug/rune-markdown-prototype --theme light --snap artifacts/light.png --tree artifacts/light.json
+target/debug/rune-markdown-prototype --scene fixture-code --theme dark --size 900x1700 --snap artifacts/code.png
 target/debug/rune-markdown-prototype --theme dark --snap artifacts/dark.png --tree artifacts/dark.json
 target/debug/rune-markdown-prototype --size 800x500 --snap artifacts/small.png
 ```
@@ -256,6 +277,19 @@ sides, replacements, decorations, caret stops and UTF-8. Editable-presentation t
 reveal without history entries, pointer hits through hidden syntax, wrapped
 navigation, composition inside revealed syntax, accessibility, entities and
 escapes, code fences in their frame, and list and quote markers.
+
+The `--scene` names (`src/scenes.rs`) open `tests/fixtures/live_preview.md` with
+the caret on one construct each: `fixture` (unfocused), `fixture-heading`,
+`fixture-inline`, `fixture-link`, `fixture-code`, `fixture-quote`,
+`fixture-nested-quote`, `fixture-list`, `fixture-ordered`, `fixture-task` and
+`fixture-list-code`.
+
+Reveal-navigation tests (`tests/reveal_navigation.rs`) drive the full window:
+Home/End on wrapped and list lines, Up/Down between styled regions and through blank
+lines, caret holds when a fence reveals above the caret and when clicking inside an
+open region, drag and Shift selections with source clipboard, deleting a revealed
+delimiter with undo/redo, every reveal rule, and parse/highlight reuse. Each checks
+that reveal adds no history.
 
 Mode tests (`tests/modes.rs`) drive the full window: the Live Preview default and
 toggle, Ctrl/Cmd+E with and without focus, history across switches, selection

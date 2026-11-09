@@ -222,7 +222,13 @@ impl<'a> Build<'a> {
             let open_line = if src[f.opening.end..].starts_with('\n') { open_line } else { f.opening.clone() };
             self.syntax_block(f.opening.clone(), open_line, CollapseSide::After);
             if let Some(closing) = &f.closing {
-                let with_break = if closing.start > 0 && src[..closing.start].ends_with('\n') { closing.start - 1..closing.end } else { closing.clone() };
+                // The line break before the fence line goes with it, past any container prefix
+                // (a list's indent, a quote's `>`) that the container hides on its own.
+                let line_start = src[..closing.start].rfind('\n').filter(|&i| i >= c.range.start || i + 1 == c.range.start);
+                let with_break = match line_start {
+                    Some(i) if i > f.opening.end || i + 1 == closing.start => i..closing.end,
+                    _ => closing.clone(),
+                };
                 self.syntax_block(closing.clone(), with_break, CollapseSide::Before);
             }
         }

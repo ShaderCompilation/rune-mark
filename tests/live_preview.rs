@@ -88,6 +88,10 @@ fn click(rt: &mut Runtime<State>, x: f32, y: f32) {
     rt.frame(0.0);
 }
 
+fn caret_x(rt: &Runtime<State>) -> f32 {
+    input(rt).and_then(|i| i.caret).expect("caret")[0]
+}
+
 fn selection(rt: &Runtime<State>) -> (usize, usize) {
     (rt.state.editor.anchor, rt.state.editor.focus)
 }
@@ -203,16 +207,30 @@ fn arrows_past_the_active_block_activate_the_adjacent_block_and_keep_the_column(
     let paragraph = source.find("paragraph").unwrap();
     let mut rt = runtime(source, Some(paragraph + 4));
     assert_eq!(displayed(&rt), "paragraph text");
+    let x = caret_x(&rt);
 
+    // The caret lands at the same place on screen in the heading's own (larger) type, not at
+    // the same byte column.
     plain(&mut rt, Key::Up);
     assert_eq!(active(&rt), Some("# Heading\n"));
-    assert_eq!(selection(&rt), (4, 4));
     assert_eq!(displayed(&rt), "# Heading");
     assert!(input(&rt).unwrap().focused);
+    let (a, b) = selection(&rt);
+    assert!(a == b && (1..4).contains(&b), "inside \"# H\", got {b}");
+    let heading_char = 14.0;
+    assert!(
+        (caret_x(&rt) - x).abs() < heading_char,
+        "{} vs {x}",
+        caret_x(&rt)
+    );
 
     plain(&mut rt, Key::Down);
     assert_eq!(active(&rt), Some("paragraph text\n"));
-    assert_eq!(selection(&rt), (paragraph + 4, paragraph + 4));
+    let (a, b) = selection(&rt);
+    assert!(a == b && (paragraph + 2..=paragraph + 4).contains(&b));
+    assert!((caret_x(&rt) - x).abs() < heading_char);
+    rt.update(|s, _| s.editor.set_caret(paragraph + 4));
+    rt.frame(0.0);
 
     plain(&mut rt, Key::End);
     plain(&mut rt, Key::Right);

@@ -1,14 +1,16 @@
 use rune::AppSpec;
 use rune_markdown_prototype::app::{view, window_key};
+use rune_markdown_prototype::scenes::SCENES;
 use rune_markdown_prototype::state::State;
 
 const SAMPLE: &str = include_str!("../sample.md");
 const WINDOW_SIZE: (f32, f32) = (1200.0, 800.0);
 
 fn main() {
-    // AppSpec also provides Rune's --snap, --tree, --theme and --size tools.
+    // AppSpec also provides Rune's --snap, --tree, --theme, --size and --scene tools.
     rune::run(AppSpec {
         on_key: Some(window_key),
+        scenes: SCENES,
         ..AppSpec::new(
             "Rune Markdown · Scratchpad",
             WINDOW_SIZE,
