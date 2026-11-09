@@ -89,6 +89,7 @@ pub use edit::Modifier;
 pub use edit::Mods;
 pub use edit::ParagraphInfo;
 pub use edit::RichStyle;
+pub use edit::SourceRangeExit;
 pub use edit::TextEdit;
 pub use el::Align;
 pub use el::Anchor;

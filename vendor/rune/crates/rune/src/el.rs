@@ -90,6 +90,7 @@ impl Drag {
 
 pub(crate) type PressFn = Rc<dyn Fn(crate::states::States<'_>, &mut Tx)>;
 pub(crate) type InputKeyFn = Rc<dyn Fn(crate::states::States<'_>, &crate::KeyEvent, &mut Tx) -> bool>;
+pub(crate) type SourceRangeExitFn = Rc<dyn Fn(crate::states::States<'_>, crate::SourceRangeExit, &mut Tx) -> bool>;
 pub(crate) type StepFn = Rc<dyn Fn(crate::states::States<'_>, i32, &mut Tx)>;
 pub(crate) type StepLimitFn = Rc<dyn Fn(crate::states::States<'_>, bool, &mut Tx)>;
 
@@ -192,6 +193,8 @@ pub struct InputSpec {
     pub(crate) key: Option<InputKeyFn>,
     pub(crate) change: Option<PressFn>,
     pub(crate) paste: Option<InputPasteFn>,
+    pub(crate) range_exit: Option<SourceRangeExitFn>,
+    pub(crate) composition_end: Option<PressFn>,
 }
 
 impl std::fmt::Debug for InputSpec {
@@ -701,6 +704,8 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         key: None,
         change: None,
         paste: None,
+        range_exit: None,
+        composition_end: None,
     }));
     e.sync_input_pills();
     e.sync_input_rich();

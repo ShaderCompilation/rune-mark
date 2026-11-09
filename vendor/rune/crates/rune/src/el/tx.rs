@@ -53,6 +53,8 @@ pub struct Tx {
     pub(crate) scroll_offsets: Vec<crate::runtime::ScrollRequest>,
     /// Elements to hold where they show across this commit (`Tx::keep_on_screen`).
     pub(crate) keep_on_screen: Vec<String>,
+    /// Where the focused caret should stay across this commit (`Tx::keep_caret_at_press`).
+    pub(crate) keep_caret: Option<crate::runtime::CaretKeep>,
     pub(crate) wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
     pub(crate) minimize: bool,
@@ -151,7 +153,7 @@ impl Tx {
     /// or a text flight. A `wake_after` only schedules.
     pub(crate) fn frame_work(&self) -> bool {
         !self.pick_reads.is_empty() || !self.scroll_to.is_empty() || !self.scroll_bottom.is_empty() || !self.scroll_pages.is_empty() || !self.scroll_offsets.is_empty()
-            || !self.keep_on_screen.is_empty() || !self.text_flights.is_empty() || !self.launches.is_empty() || self.select.is_some()
+            || !self.keep_on_screen.is_empty() || self.keep_caret.is_some() || !self.text_flights.is_empty() || !self.launches.is_empty() || self.select.is_some()
     }
 
     /// An app marker on the next frame, e.g. `tx.trace_event(format_args!("lab:{step:?}"))`.

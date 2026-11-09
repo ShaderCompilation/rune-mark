@@ -144,6 +144,9 @@ mod reveal;
 mod scroll_anchor;
 #[path = "runtime/scroll/sticky.rs"]
 mod sticky;
+#[path = "runtime/scroll/caret_keep.rs"]
+mod caret_keep;
+pub(crate) use caret_keep::CaretKeep;
 #[path = "runtime/anchor.rs"]
 mod anchor;
 pub(crate) use anchor::anchor_position;
@@ -329,6 +332,8 @@ mod hit;
 mod build;
 #[path = "runtime/input/keys.rs"]
 mod keys;
+#[path = "runtime/input/source_range.rs"]
+mod source_range;
 #[path = "runtime/input/pointer.rs"]
 mod pointer;
 use pointer::CLICK_SLOP;

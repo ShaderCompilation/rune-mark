@@ -85,7 +85,7 @@ use icon::rasterize_icon;
 use trak::{Trak, Traks, font_trak};
 
 pub use atlas::{ATLAS_SIZE, Atlas, AtlasPage, GlyphQuad};
-pub(crate) use cursor::{cursor_from_point, cursor_geometry, line_edge, move_line, range_boxes};
+pub(crate) use cursor::{cursor_from_point, cursor_geometry, line_edge, move_line, on_edge_line, range_boxes};
 pub use decorations::Deco;
 pub(crate) use decorations::PaintedDeco;
 pub use span::{Ink, Link, LinkPaint, Span, TextHighlight};

@@ -59,11 +59,15 @@ impl<S: 'static> Runtime<S> {
             _ => !ev.is_command_chord() || ev.control_binding().is_some(),
         };
         if input_handles {
-            let layout = self.focused_layout();
+            let mut layout = self.focused_layout();
+            // A bounded field asks the app before a key leaves its range; a yes applies it whole.
+            let unbounded = self.offer_source_range_exit(ev, layout.as_deref(), one);
+            if unbounded { layout = self.focused_unbounded_layout(); }
             // A rich field copies its selection's formatting too, read before a cut removes it.
             let mut html = None;
             let copies = matches!(ev.key, crate::edit::Key::Command('c' | 'x'));
-            let handled = self.with_focused(|e| {
+            let handled = self.with_focused_state_in(!unbounded, |state, access, _| {
+                let e = access(state);
                 if copies && e.is_rich() && !e.is_secure() {
                     html = Some(e.selected_html()).filter(|h| !h.is_empty());
                 }
@@ -164,9 +168,15 @@ impl<S: 'static> Runtime<S> {
 
     /// [`Self::with_focused`] for an edit that needs the app state (an app's paste hook).
     pub(super) fn with_focused_state(&mut self, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
+        self.with_focused_state_in(true, f, tx)
+    }
+
+    /// [`Self::with_focused_state`]; `bounded` false applies the edit to the whole buffer of a
+    /// field with `El::source_range`, after `on_source_range_exit` agreed.
+    pub(super) fn with_focused_state_in(&mut self, bounded: bool, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
         let Some(path) = self.focused.clone() else { return false };
-        let Some((access, submit, change, animate_layout, single_line, secure, revealed_override, input_range)) =
-            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override, i.edit.input_source_range()))
+        let Some((access, submit, change, composition_end, animate_layout, single_line, secure, revealed_override, input_range)) =
+            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.composition_end.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override, i.edit.input_source_range().filter(|_| bounded)))
         else {
             return false;
         };
@@ -180,6 +190,7 @@ impl<S: 'static> Runtime<S> {
             if let Some(rev) = revealed_override { edit.set_revealed(rev); }
         }
         let before = change.as_ref().map(|_| zeroize::Zeroizing::new(access(states!(self)).text.clone()));
+        let composing = access(states!(self)).preedit.is_some();
         let mut out = f(states!(self), &access, tx);
         // Submit and Escape's blur act once per press; held keys still type, move and delete.
         if tx.key_repeat { out.submit = false; out.blur = false; }
@@ -191,6 +202,12 @@ impl<S: 'static> Runtime<S> {
         {
             change(states!(self), tx);
             access(states!(self)).mark_edited();
+        }
+        if composing
+            && access(states!(self)).preedit.is_none()
+            && let Some(end) = composition_end
+        {
+            end(states!(self), tx);
         }
         if let Some(c) = out.copy {
             tx.copy(c);

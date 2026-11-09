@@ -25,6 +25,7 @@ pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
 mod marks;
 mod model;
 mod view;
+pub use view::SourceRangeExit;
 pub use model::{Block, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphInfo, RichStyle};
 pub(crate) use history::History;
 use history::{ActiveGroup, EditedTag};

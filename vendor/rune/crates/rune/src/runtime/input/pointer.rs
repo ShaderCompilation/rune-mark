@@ -178,6 +178,7 @@ impl<S: 'static> Runtime<S> {
         self.playground_pointer_down(x);
         if let Some(i) = target.filter(|&i| self.nodes[i].handlers.on_text_press.is_some()) {
             let at = self.text_index_at(i, x, y).unwrap_or(0);
+            self.press_at = (x, y);
             self.queue.push(Action::TextPress(self.nodes[i].path.clone(), at));
             return;
         }

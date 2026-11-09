@@ -121,4 +121,19 @@ impl Tx {
     pub fn keep_on_screen(&mut self, key: impl Into<String>) {
         self.keep_on_screen.push(key.into());
     }
+    /// Keep the focused text field's caret line at the height where the current press started,
+    /// across the commit this handler causes, by moving the nearest vertical scroll viewport
+    /// around the field. For a press that reshapes the content it lands in, such as rendered
+    /// text that becomes an editor for its source, so the caret appears under the pointer.
+    /// Instant and clamped to the content; any momentum or glide stops. Nothing happens when
+    /// no field is focused after the commit.
+    pub fn keep_caret_at_press(&mut self) {
+        self.keep_caret = Some(crate::runtime::CaretKeep::Press);
+    }
+    /// [`Tx::keep_caret_at_press`] at the height where the last frame drew the caret, such as a
+    /// view switch that redraws the whole document around it. Nothing happens unless the caret's
+    /// viewport showed it before the commit and a field is focused after it.
+    pub fn keep_caret_on_screen(&mut self) {
+        self.keep_caret = Some(crate::runtime::CaretKeep::Caret);
+    }
 }

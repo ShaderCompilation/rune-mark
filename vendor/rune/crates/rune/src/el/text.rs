@@ -19,6 +19,33 @@ impl El {
         self
     }
 
+    /// Called before a bounded input ([`El::source_range`]) applies a key that would act beyond
+    /// its range: navigation leaving it, Select All, or a deletion crossing its edge (see
+    /// [`SourceRangeExit`](crate::SourceRangeExit)). Return true to apply that key to the whole
+    /// buffer, as the full input would, with a layout of the whole text at this field's width;
+    /// the app might show another range or a full input next. Return false to keep the bounded
+    /// behavior. Not called during an input-method composition or without a range.
+    pub fn on_source_range_exit<S: 'static>(
+        mut self,
+        f: impl Fn(&mut S, crate::SourceRangeExit, &mut Tx) -> bool + 'static,
+    ) -> Self {
+        if let Some(input) = &mut self.input {
+            input.range_exit = Some(Rc::new(move |s, exit, tx| f(downcast::<S>(s), exit, tx)));
+        }
+        self
+    }
+
+    /// Called after an input-method composition in this focused field commits or is cancelled,
+    /// once any committed text has applied and `on_input_change` has run. An app can defer view
+    /// changes while [`TextEdit::preedit`](crate::TextEdit::preedit) is open and apply them here.
+    /// A composition that ends because the field loses focus is not reported.
+    pub fn on_composition_end<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        if let Some(input) = &mut self.input {
+            input.composition_end = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
+        }
+        self
+    }
+
     pub fn font(mut self, s: TextStyle) -> Self {
         if let Some(t) = &mut self.text {
             t.style = s;

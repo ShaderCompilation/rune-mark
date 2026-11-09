@@ -1,7 +1,73 @@
 //! A bounded view of the shared model. All stored selection and history offsets stay global.
+use parley::Layout;
+
 use super::*;
+use crate::text::Ink;
+
+/// A key that a bounded input ([`El::source_range`](crate::El::source_range)) would apply
+/// beyond its range, offered to [`El::on_source_range_exit`](crate::El::on_source_range_exit)
+/// before it applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SourceRangeExit {
+    /// Caret movement leaving the range: an arrow past its first or last line or character, a
+    /// word or document jump. `extend` when Shift extends the selection.
+    Navigate { extend: bool },
+    /// Select All, which the full input applies to the whole document.
+    SelectAll,
+    /// A deletion that would remove text outside the range, such as Backspace at its start.
+    Delete,
+}
 
 impl TextEdit {
+    /// How `ev` would act beyond the input range, judged on copies before it applies (history is
+    /// copy-on-write, so a probe never touches the model's). `layout` is the bounded layout.
+    /// Nothing exits during a composition, in a secure field, or without a range.
+    pub(crate) fn source_range_exit(&self, ev: &KeyEvent, layout: Option<&Layout<Ink>>) -> Option<SourceRangeExit> {
+        let bounds = self.input_range.clone()?;
+        if self.secure || self.preedit.is_some() {
+            return None;
+        }
+        let control = ev.control_binding();
+        let navigates = matches!(control, Some('a' | 'b' | 'e' | 'f' | 'n' | 'p'))
+            || (control.is_none()
+                && !ev.is_command_chord()
+                && matches!(ev.key, Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End));
+        let deletes = matches!(control, Some('d' | 'h' | 'k'))
+            || (control.is_none() && !ev.is_command_chord() && matches!(ev.key, Key::Backspace | Key::Delete));
+        if control.is_none() && ev.key == Key::Command('a') && !ev.mods.shift {
+            return (bounds != (0..self.text.len())).then_some(SourceRangeExit::SelectAll);
+        }
+        let outside = |i: usize| i < bounds.start || i > bounds.end;
+        if navigates {
+            let mut probe = self.clone();
+            probe.key(ev, layout);
+            // Up on a field's first line goes to its start and Down on its last to its end; at a
+            // range's edge they leave it instead, for the line beyond.
+            let vertical = match control {
+                Some(c) => matches!(c, 'n' | 'p').then_some(c == 'n'),
+                None if !ev.mods.cmd => matches!(ev.key, Key::Up | Key::Down).then_some(ev.key == Key::Down),
+                None => None,
+            };
+            let at_edge = vertical.zip(layout).is_some_and(|(down, l)| {
+                !self.is_hidden_multiline() && crate::text::on_edge_line(l, self.display_index(self.focus), down)
+            });
+            // A rich field's Right or Down can add a paragraph after a trailing block: not movement.
+            let moved_out = probe.text == self.text && (at_edge || outside(probe.focus) || outside(probe.anchor));
+            return moved_out.then_some(SourceRangeExit::Navigate { extend: ev.mods.shift });
+        }
+        if deletes {
+            let mut probe = self.clone();
+            probe.input_range = None;
+            probe.key(ev, None);
+            // A plain deletion leaves the caret where the removed text started.
+            let removed = self.text.len().checked_sub(probe.text.len()).filter(|&n| n > 0)?;
+            let start = probe.anchor.min(probe.focus);
+            return (outside(start) || outside(start + removed)).then_some(SourceRangeExit::Delete);
+        }
+        None
+    }
+
     /// The bounded source range while an input event or its callbacks are being dispatched.
     /// It is rebased by each replacement, including undo/redo, and is `None` outside dispatch
     /// on the app-owned model. An `on_input_change` callback can retain this exact range in view

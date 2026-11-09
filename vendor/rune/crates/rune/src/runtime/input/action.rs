@@ -185,6 +185,7 @@ pub(super) fn merge(tx: &mut Tx, one: Tx) {
     tx.scroll_pages.extend(one.scroll_pages);
     tx.scroll_offsets.extend(one.scroll_offsets);
     tx.keep_on_screen.extend(one.keep_on_screen);
+    if one.keep_caret.is_some() { tx.keep_caret = one.keep_caret; }
     tx.wakes.extend(one.wakes);
     tx.text_flights.extend(one.text_flights);
     tx.launches.extend(one.launches);

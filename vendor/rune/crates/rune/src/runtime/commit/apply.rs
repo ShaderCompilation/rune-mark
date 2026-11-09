@@ -740,6 +740,8 @@ impl<S: 'static> Runtime<S> {
                     input.access = None;
                     input.key = None;
                     input.change = None;
+                    input.range_exit = None;
+                    input.composition_end = None;
                     input.edit.focused = false;
                     input.edit.clear_preedit();
                     input.edit.conceal();

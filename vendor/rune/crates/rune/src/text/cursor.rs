@@ -202,7 +202,8 @@ pub(crate) fn line_edge(layout: &Layout<Ink>, byte: usize, end: bool) -> usize {
 
 /// Byte index on the previous (`!down`) or next (`down`) visual line at `byte`'s x coordinate,
 /// or `None` when already on the last line moving down.
-pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option<usize> {
+/// The visual line holding the caret at `byte`, and the caret's box. `None` for an empty layout.
+fn caret_line(layout: &Layout<Ink>, byte: usize) -> Option<(usize, parley::BoundingBox)> {
     use parley::{editing::Cursor, layout::Affinity};
     if layout.len() == 0 {
         return None;
@@ -210,8 +211,18 @@ pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option
     let cur = Cursor::from_byte_index(layout, byte, Affinity::Downstream);
     let bb = cursor_geometry(&cur, layout, 0.0);
     let y = ((bb.y0 + bb.y1) * 0.5) as f32;
+    Some((line_for_offset(layout, y).map_or(layout.len() - 1, |(ix, _)| ix), bb))
+}
+
+/// Whether the caret at `byte` is on the first (`down` false) or last visual line, with no line
+/// for [`move_line`] to move to in that direction.
+pub(crate) fn on_edge_line(layout: &Layout<Ink>, byte: usize, down: bool) -> bool {
+    caret_line(layout, byte).is_none_or(|(idx, _)| if down { idx + 1 >= layout.len() } else { idx == 0 })
+}
+
+pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option<usize> {
+    let (idx, bb) = caret_line(layout, byte)?;
     let limit = layout.len() - 1;
-    let idx = line_for_offset(layout, y).map_or(limit, |(ix, _)| ix);
     if !down && idx == 0 {
         return Some(0);
     }
