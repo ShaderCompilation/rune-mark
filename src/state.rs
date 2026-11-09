@@ -5,6 +5,7 @@ use rune::{Key, KeyEvent, SourceRangeExit, TextEdit};
 use rune_kit::markdown::SourceClick;
 
 use crate::markdown::{BlockMetadata, ParsedDocument};
+use crate::zoom::Zoom;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EditingMode {
@@ -62,6 +63,8 @@ pub struct State {
     pub editor: TextEdit,
     view: ViewState,
     parsed: RefCell<ParsedDocument>,
+    /// Window-wide zoom; it never touches the document or view state.
+    zoom: Zoom,
 }
 
 impl State {
@@ -75,7 +78,16 @@ impl State {
             editor,
             view: ViewState::default(),
             parsed: RefCell::new(ParsedDocument::new(source)),
+            zoom: Zoom::default(),
         }
+    }
+
+    pub fn zoom(&self) -> Zoom {
+        self.zoom
+    }
+
+    pub fn zoom_mut(&mut self) -> &mut Zoom {
+        &mut self.zoom
     }
 
     pub fn view(&self) -> &ViewState {

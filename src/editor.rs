@@ -73,9 +73,12 @@ pub fn pick_view(state: &mut State, view: usize, tx: &mut Tx) {
     }
 }
 
-/// The window's keys that no focused control took: the mode shortcut, and Select All
+/// The window's keys that no focused control took: the mode and zoom shortcuts, and Select All
 /// in Live Preview while no block is open, which selects the whole document in Source mode.
 pub fn window_key(state: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if crate::zoom::zoom_key(state, ev, tx) {
+        return true;
+    }
     if is_toggle_shortcut(ev) {
         return toggle_mode(state, tx);
     }

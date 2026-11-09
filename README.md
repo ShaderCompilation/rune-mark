@@ -13,6 +13,14 @@ Ctrl+E (⌘E on macOS) switches between Live Preview and Source, returning to th
 last source view chosen (Source or Split). The neutral theme follows the
 desktop's light/dark setting.
 
+**Zoom** scales the whole window, toolbar included, from 50% to 300%:
+Ctrl/⌘ + (or =) zooms in, Ctrl/⌘ − zooms out and Ctrl/⌘ 0 resets. The control
+at the right of the toolbar does the same; press the percentage to reset. Text
+reflows to the zoomed width and stays sharp. `src/zoom.rs` lays the window out
+in `window / zoom` points and draws it with Rune's `El::scale` from the top-left
+corner. Zoom doesn't touch the document, caret, history or view mode, and isn't
+saved.
+
 The sample is embedded at build time. Edit or paste over it; the preview reads
 the same editor buffer on every edit. Nothing is saved when the app closes.
 The source editor is plain monospace text with wrapping, clipboard operations,

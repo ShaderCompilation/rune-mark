@@ -1,10 +1,11 @@
 //! The window: a toolbar with the view toggle above Live Preview, the source alone, or the
 //! source beside a rendered preview.
-use rune::{Cx, El, ScrollSpec, TextStyle, col, el, row, text};
+use rune::{Cx, El, ScrollSpec, TextStyle, col, el, row, spacer, text};
 use rune_kit::{Kit, Markdown};
 
 use crate::editor::{TOGGLE_SHORTCUT, document, source_input, view_toggle};
 use crate::state::{EditingMode, SourceLayout, State};
+use crate::zoom::{zoom_control, zoomed};
 
 pub use crate::editor::window_key;
 
@@ -50,7 +51,7 @@ pub fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .fill(kit.c.border_base),
         )
         .child(col().key("body").w_full().grow(1.0).min_h(0.0).child(body));
-    window.w_full().h_full()
+    zoomed(state, cx, kit.c.bg_base, window)
 }
 
 fn toolbar(state: &State, kit: &Kit) -> El {
@@ -68,6 +69,8 @@ fn toolbar(state: &State, kit: &Kit) -> El {
                 .font(TextStyle::new(12.0, 400.0))
                 .color(kit.c.text_muted),
         )
+        .child(spacer())
+        .child(zoom_control(state, kit))
 }
 
 /// Live Preview, or the source alone: one scrolling document. Both keep the same scroll
