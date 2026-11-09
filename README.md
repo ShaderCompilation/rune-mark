@@ -1,8 +1,17 @@
 # Rune Markdown scratchpad
 
-A small native Rust prototype: rendered Markdown on the left, raw input on the
-right. The panes share the window equally and scroll independently. The neutral
-theme follows the desktop's light/dark setting.
+A small native Rust prototype for editing Markdown in place. The window opens in
+**Live Preview**: one scrolling document where the block you click shows its
+Markdown source. A toolbar toggle switches between three views:
+
+- **Live Preview** (default): rendered blocks, with the active block as source.
+- **Source**: the whole document as plain source, in the same scroll container.
+- **Split**: the source on the left and a selectable rendered preview on the
+  right, each scrolling on its own.
+
+Ctrl+E (⌘E on macOS) switches between Live Preview and Source, returning to the
+last source view chosen (Source or Split). The neutral theme follows the
+desktop's light/dark setting.
 
 The sample is embedded at build time. Edit or paste over it; the preview reads
 the same editor buffer on every edit. Nothing is saved when the app closes.
@@ -66,19 +75,39 @@ measured.
 composition, and undo/redo history. Separate view state records `Source` or
 `LivePreview` mode and an optional active source range. Changing mode never
 changes the editor; block activation only sets its caret and focus. Both preserve
-document bytes and history, including pending redo steps.
+document bytes and history, including pending redo steps. Source mode has no
+active range; returning to Live Preview opens the region at the caret.
 
 `src/markdown.rs` derives block kinds and UTF-8 byte ranges from Rune Kit's cached
 full-document parse. Each top-level list or quote is one block, including nested
 content. Metadata refreshes on buffer changes, including undo/redo, and is reused
 for selection and mode changes. Edits, undo, and redo rebase the active range;
 new blocks created inside it remain open, and parsed containers that merge with
-it expand the range. Moving the caret or selection outside it, or losing focus,
-closes it. An active composition keeps it open until commit or cancellation.
+it expand the range. Losing focus closes it. An active composition defers every
+region and mode change until it commits or cancels.
 
-The default screen remains the split view with a full source editor. Mode controls,
-rendered-text activation, adjacent-block navigation, and switching to Source for
-cross-boundary commands are not built yet.
+The earlier split layout remains as a third view, with the source moved to the
+left.
+
+## Views and scrolling
+
+`src/app.rs` builds the window: the toolbar, then either one `document-scroll`
+container (Live Preview and Source) or the split panes. `SourceLayout` in
+`State` records whether Source mode shows the source alone or split; the mode
+itself stays `LivePreview` or `Source`.
+
+- **Switching** never changes the text, caret, focus or history. Going back to
+  Live Preview opens the block at the caret; a selection spanning several blocks
+  collapses to its focus end. Switches wait for an open composition.
+- **Toggle segments** keep the editor focused when pressed, so an open block
+  stays open. They aren't keyboard-focusable; use Ctrl/Cmd+E from the keyboard.
+- **Select All** in Live Preview, with or without an open block, switches to
+  Source and selects the document.
+- **Scroll stability.** Opening a block by clicking keeps its caret line under
+  the pointer. Switching views and moving into an adjacent block with the arrows
+  keep the caret line at the same height on screen. These use the vendored
+  `Tx::keep_caret_at_press` and `Tx::keep_caret_on_screen`, and land without
+  transition animations.
 
 ## Source mappings and renderer hooks
 
@@ -119,6 +148,37 @@ a UTF-8-safe common-prefix/suffix fallback for external buffer revisions. The
 mapping is transient on the editor during dispatch and is absent from its history;
 no block owns an editing buffer or undo stack.
 
+## Live Preview interactions
+
+`editor::document` renders Live Preview from the full parse, with the active region
+replaced by the shared input (`editor::source_input`). `State` handles each
+interaction without creating per-block buffers or history:
+
+- **Clicks.** Clicking rendered text, a link, a task marker or a blank line
+  activates its region, reveals its Markdown and puts the caret at the mapped
+  source position. Links do not open and tasks do not toggle.
+- **Editing.** Typing, Enter, paste and deletion edit the shared buffer at once.
+  Enter always inserts a newline. The input shows the region without its trailing
+  line breaks, so it has no empty last line. A caret just after a region's final
+  newline belongs to the next region: Enter at the end of a block renders the block
+  and continues on the new blank line.
+- **Arrows.** Up on the first line, Down on the last, Left at the start or Right at
+  the end moves into the adjacent region, which then activates. Vertical movement
+  keeps its horizontal position because the key applies to the whole document's
+  layout. Shift-selection stays within the block.
+- **Source switches.** Shift-navigation beyond the block, Select All and deletions
+  across its boundary (Backspace at its start, Delete at its end) switch to Source
+  mode, then apply once to the whole document.
+- **Undo and redo** stay document-wide. If the restored selection is outside the
+  active region, the mode switches to Source.
+- **Composition.** While an input method composes, keys stay within the block and
+  clicks wait. A deferred click applies after the composition commits (rebased past
+  the committed text) or cancels.
+
+Rune reports keys that would leave the bounded input through
+`El::on_source_range_exit`, before they apply. Rune decides what would leave the
+range using the field's layout; the app decides what happens next.
+
 ## Checks
 
 ```sh
@@ -144,17 +204,28 @@ preserving document, selection, composition, undo, and redo across view changes.
 Bounded-input tests also cover local layout with global Unicode offsets, wrapped
 navigation, pointer selection, clipboard, IME and accessibility, range rebasing,
 block splitting/merging, and repeated-text undo/redo over the shared history.
+Live Preview tests drive the same document view through clicks on rendered text,
+links and task markers; typing, Enter, paste and deletion; adjacent-block arrows
+with column retention; Source switches for Shift-navigation, Select All and boundary
+deletions; undo/redo; and deferred clicks around composition commit and cancel.
 They do not substitute for native input checks.
+
+Mode tests (`tests/modes.rs`) drive the full window: the Live Preview default and
+toggle, Ctrl/Cmd+E with and without focus, history across switches, selection
+collapse, Select All, the Split layout's left-hand source, and caret heights
+across clicks, switches and adjacent-block moves.
 
 For the window smoke test:
 
-- Type in the middle of a paragraph; confirm immediate preview updates without
-  losing the caret. Test multiline paste and Ctrl+Z / Ctrl+Shift+Z.
+- Click a paragraph halfway down a long document; confirm the caret appears under
+  the pointer and nothing jumps. Press Ctrl+E twice; the caret stays put.
+- In Split, type in the middle of a paragraph; confirm immediate preview updates
+  without losing the caret. Test multiline paste and Ctrl+Z / Ctrl+Shift+Z.
 - Select all source and delete it; confirm the preview becomes empty. Type again.
 - Paste enough paragraphs to overflow both panes. Scroll each independently and
   check the editor follows its caret while typing near the end.
 - Resize the window; confirm equal pane widths, wrapped source, and usable scroll
-  regions. Try a wide table and horizontal scrolling.
+  regions. Try a wide table and horizontal scrolling in each view.
 - Drag across preview paragraphs and table cells and copy the rendered text.
   Return to the source and continue editing.
 - Check light/dark screenshots and change the desktop appearance while running.
@@ -165,7 +236,7 @@ For the window smoke test:
   the unmodified vendored copy: passed.
 - All four original runtime tests: passed offline before and after vendoring.
 - Native window, screenshots, and manual input checks have not been repeated for
-  these state and parser changes.
+  these state, parser and interaction changes.
 
 ## Attribution
 

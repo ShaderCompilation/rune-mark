@@ -1,101 +1,37 @@
-use rune::{AppSpec, Cx, El, ScrollSpec, TextStyle, col, el, row, text};
-use rune_kit::{Kit, Markdown};
-use rune_markdown_prototype::editor::source_input;
+use rune::AppSpec;
+use rune_markdown_prototype::app::{view, window_key};
 use rune_markdown_prototype::state::State;
 
 const SAMPLE: &str = include_str!("../sample.md");
 const WINDOW_SIZE: (f32, f32) = (1200.0, 800.0);
 
-fn pane(key: &'static str, title: &'static str, content: El, kit: &Kit) -> El {
-    col()
-        .key(key)
-        .grow(1.0)
-        .shrink()
-        .min_h(0.0)
-        .h_full()
-        .child(
-            row()
-                .w_full()
-                .h(44.0)
-                .padding(12.0)
-                .center_y()
-                .fill(kit.c.bg_base)
-                .child(
-                    text(title)
-                        .font(TextStyle::new(13.0, 600.0))
-                        .color(kit.c.text_muted),
-                ),
-        )
-        .child(content)
-}
-
-fn view(state: &State, cx: &mut Cx<State>) -> El {
-    state.sync_document();
-    let kit = Kit::neutral(cx.system_dark());
-
-    let preview = col()
-        .key("preview-scroll")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(
-            col().w_full().padding(24.0).child(
-                Markdown::new(&state.editor.text)
-                    .selectable(true)
-                    .scroll_wide(true)
-                    .build(&kit)
-                    .key("rendered-markdown"),
-            ),
-        );
-
-    let editor = col()
-        .key("editor-scroll")
-        // Clicking blank space in the pane should also return focus to the editor.
-        .role("textbox")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(
-            col()
-                .w_full()
-                .padding(24.0)
-                .child(source_input(state, &kit)),
-        );
-
-    row()
-        .key("scratchpad")
-        .w_full()
-        .h_full()
-        .fill(kit.c.bg_base)
-        .child(pane("preview-pane", "Preview", preview, &kit))
-        .child(el().key("divider").w(1.0).h_full().fill(kit.c.border_base))
-        .child(pane("editor-pane", "Markdown", editor, &kit))
-}
-
 fn main() {
     // AppSpec also provides Rune's --snap, --tree, --theme and --size tools.
-    rune::run(AppSpec::new(
-        "Rune Markdown · Scratchpad",
-        WINDOW_SIZE,
-        || State::new(SAMPLE),
-        view,
-    ));
+    rune::run(AppSpec {
+        on_key: Some(window_key),
+        ..AppSpec::new(
+            "Rune Markdown · Scratchpad",
+            WINDOW_SIZE,
+            || State::new(SAMPLE),
+            view,
+        )
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rune::{ClipboardContent, Env, Key, KeyEvent, Mods, Runtime};
+    use rune_markdown_prototype::state::{EditingMode, SourceLayout};
 
+    /// The window in its split layout, where the preview re-renders the whole buffer as the
+    /// source is edited.
     fn runtime(source: &str, dark: bool) -> Runtime<State> {
+        let mut state = State::new(source);
+        state.set_mode(EditingMode::Source);
+        state.set_source_layout(SourceLayout::Split);
         let mut rt = Runtime::new(
-            State::new(source),
+            state,
             view,
             WINDOW_SIZE,
             Env {
@@ -103,6 +39,7 @@ mod tests {
                 scale: 1.0,
             },
         );
+        rt.on_key = Some(window_key);
         rt.frame(0.0);
         rt
     }

@@ -1,7 +1,8 @@
 # A little Markdown scratchpad
 
-Write Markdown on the **right** and see it rendered on the **left**.
-Changes are live. This scratchpad is kept in memory only.
+Click any block to edit its Markdown in place. Press **Ctrl+E** (⌘E on macOS)
+for the whole source, or pick **Split** for source beside a preview.
+This scratchpad is kept in memory only.
 
 ## Try some formatting
 

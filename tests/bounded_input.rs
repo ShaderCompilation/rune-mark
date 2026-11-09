@@ -52,7 +52,9 @@ fn bounded_layout_caret_and_hit_testing_use_global_unicode_offsets() {
     let start = source.find("Բարև").unwrap();
     let mut rt = runtime(source, start, 240.0);
     let range = rt.state.view().active_source_range().unwrap();
-    assert_eq!(displayed(&rt), source[range]);
+    assert_eq!(&source[range], "Բարև café 👋🏽 tail\n");
+    // The region's line break would draw as an empty last line; the input omits it.
+    assert_eq!(displayed(&rt), "Բարև café 👋🏽 tail");
     assert!(rt.ime_area.unwrap()[0] < 1.0);
     for ch in ["Բ", "ա", "ր", "և", " ", "c", "a", "f", "é", " ", "👋🏽"] {
         let before = rt.state.editor.focus;
@@ -86,12 +88,10 @@ fn copy_cut_paste_and_undo_share_one_document_history() {
     let source = "before\n\ncafé and Բարև\n\nafter";
     let start = source.find("café").unwrap();
     let mut rt = runtime(source, start, 300.0);
-    let range = rt.state.view().active_source_range().unwrap();
-    command(&mut rt, 'a');
-    assert_eq!(
-        (rt.state.editor.anchor, rt.state.editor.focus),
-        (range.start, range.end)
-    );
+    let range = rt.state.input_range().unwrap();
+    assert_eq!(&source[range.clone()], "café and Բարև");
+    rt.update(|s, _| s.editor.set_selection(range.start, range.end));
+    rt.frame(0.0);
     command(&mut rt, 'c');
     assert_eq!(
         rt.copy_request.take().as_deref(),
@@ -108,7 +108,7 @@ fn copy_cut_paste_and_undo_share_one_document_history() {
     );
     rt.paste("new\n\nsecond");
     rt.frame(0.0);
-    assert_eq!(rt.state.editor.text, "before\n\nnew\n\nsecond\nafter");
+    assert_eq!(rt.state.editor.text, "before\n\nnew\n\nsecond\n\nafter");
     assert!(displayed(&rt).contains("new\n\nsecond"));
     command(&mut rt, 'z');
     command(&mut rt, 'z');
@@ -144,7 +144,7 @@ fn composition_replaces_the_global_selection_and_reports_local_caret_geometry() 
     rt.ime(Ime::Preedit("日本".into(), Some(("日".len(), "日".len()))));
     rt.frame(0.0);
     assert_eq!(rt.state.editor.text, source);
-    assert_eq!(displayed(&rt), "日本 tail\n");
+    assert_eq!(displayed(&rt), "日本 tail");
     let first_caret = rt.ime_area.unwrap();
     rt.ime(Ime::Preedit(
         "日本".into(),
@@ -158,7 +158,7 @@ fn composition_replaces_the_global_selection_and_reports_local_caret_geometry() 
         .iter()
         .find(|(_, n)| n.author_id() == Some("markdown-input"))
         .unwrap();
-    assert_eq!(field.1.value(), Some("café tail\n"));
+    assert_eq!(field.1.value(), Some("café tail"));
     assert_eq!(field.1.text_selection().unwrap().focus.character_index, 2);
     rt.ime(Ime::Commit("日本".into()));
     rt.frame(0.0);
@@ -179,7 +179,7 @@ fn accessibility_reads_and_edits_only_the_view_with_global_model_selection() {
         .iter()
         .find(|(_, n)| n.author_id() == Some("markdown-input"))
         .unwrap();
-    assert_eq!(field.1.value(), Some("Բարև café\n"));
+    assert_eq!(field.1.value(), Some("Բարև café"));
     let run = tree
         .nodes
         .iter()
@@ -223,7 +223,7 @@ fn accessibility_reads_and_edits_only_the_view_with_global_model_selection() {
     rt.frame(0.0);
     assert_eq!(
         rt.state.editor.text,
-        "private prefix\n\nnew\nprivate suffix"
+        "private prefix\n\nnew\n\nprivate suffix"
     );
     command(&mut rt, 'z');
     command(&mut rt, 'z');
@@ -242,7 +242,11 @@ fn enter_and_paste_keep_the_entire_edited_region_open_across_block_splits() {
     let range = rt.state.view().active_source_range().unwrap();
     assert_eq!(range.start, start);
     assert!(rt.state.editor.text[range.clone()].contains("alpha\n\n\n# inserted\n\n beta"));
-    assert_eq!(displayed(&rt), rt.state.editor.text[range]);
+    assert_eq!(displayed(&rt), "alpha\n\n\n# inserted\n\n beta");
+    assert_eq!(
+        &rt.state.editor.text[range],
+        "alpha\n\n\n# inserted\n\n beta\n"
+    );
     command(&mut rt, 'z');
     command(&mut rt, 'z');
     assert_eq!(rt.state.editor.text, source);
@@ -277,7 +281,7 @@ fn parser_merges_expand_the_open_range_in_both_directions() {
 }
 
 #[test]
-fn leaving_or_blurring_closes_the_region_but_composition_keeps_it_open() {
+fn navigation_activates_the_reached_region_blur_closes_it_and_composition_defers_both() {
     let source = "before\n\nbody\n\nafter";
     let start = source.find("body").unwrap();
     let mut rt = runtime(source, start, 300.0);
@@ -286,16 +290,21 @@ fn leaving_or_blurring_closes_the_region_but_composition_keeps_it_open() {
     rt.update(|s, _| s.editor.set_caret(0));
     rt.frame(0.0);
     assert!(rt.state.view().active_source_range().is_some());
+    // Cancelling the composition applies the deferred change: the caret's region opens.
     rt.ime(Ime::Preedit(String::new(), None));
     rt.frame(0.0);
-    assert_eq!(rt.state.view().active_source_range(), None);
+    assert_eq!(rt.state.view().active_source_range(), Some(0..7));
     rt.update(|s, _| {
         s.activate_block_at(start);
     });
     rt.frame(0.0);
     key(&mut rt, Key::Left, Mods::default());
     assert_eq!(rt.state.editor.focus, start - 1);
-    assert_eq!(rt.state.view().active_source_range(), None);
+    assert_eq!(
+        rt.state.view().active_source_range(),
+        Some(start - 1..start)
+    );
+    assert_eq!(rt.state.view().mode(), EditingMode::LivePreview);
     rt.update(|s, _| {
         s.activate_block_at(start);
     });
@@ -348,7 +357,7 @@ fn repeated_text_is_rebased_from_the_actual_edit_and_undo_positions() {
     rt.paste("same\n\n");
     rt.frame(0.0);
     assert_eq!(rt.state.view().active_source_range(), Some(0..11));
-    assert_eq!(displayed(&rt), "same\n\nsame\n");
+    assert_eq!(displayed(&rt), "same\n\nsame");
     command(&mut rt, 'z');
     assert_eq!(rt.state.editor.text, source);
     assert_eq!(rt.state.view().active_source_range(), Some(0..5));
@@ -392,7 +401,7 @@ fn pointer_drag_double_and_triple_click_stay_within_the_view() {
     rt.pointer_down(x + 3.0, 11.0);
     rt.pointer_up(x + 3.0, 11.0);
     rt.frame(0.0);
-    assert_eq!(rt.state.editor.selected(), "alpha beta gamma\n");
+    assert_eq!(rt.state.editor.selected(), "alpha beta gamma");
     assert_eq!(
         rt.state.view().active_source_range(),
         Some(start..start + 17)
@@ -400,10 +409,24 @@ fn pointer_drag_double_and_triple_click_stay_within_the_view() {
 }
 
 #[test]
-fn boundary_deletions_do_not_modify_hidden_content() {
+fn without_an_exit_hook_boundary_deletions_do_not_modify_hidden_content() {
+    fn bounded(edit: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        rune::text_input(edit, rune::TextStyle::new(14.0, 400.0).mono().lh(22.0))
+            .source_range(8..12)
+            .on_edit(|edit: &mut TextEdit| edit)
+    }
     let source = "before\n\nbody\n\nafter";
-    let start = source.find("body").unwrap();
-    let mut rt = runtime(source, start, 300.0);
+    let mut edit = TextEdit::new(source);
+    edit.set_caret(8);
+    edit.focused = true;
+    let mut rt = Runtime::new(edit, bounded, (300.0, 100.0), Env::default());
+    rt.frame(0.0);
+    let press = |rt: &mut Runtime<TextEdit>, key: Key, mods: Mods| {
+        let event = KeyEvent { key, mods };
+        rt.key(event.clone());
+        rt.key_up(event);
+        rt.frame(0.0);
+    };
     for mods in [
         Mods::default(),
         Mods {
@@ -415,19 +438,23 @@ fn boundary_deletions_do_not_modify_hidden_content() {
             ..Mods::default()
         },
     ] {
-        key(&mut rt, Key::Backspace, mods);
-        assert_eq!(rt.state.editor.text, source);
+        press(&mut rt, Key::Backspace, mods);
+        assert_eq!(rt.state.text, source);
     }
-    key(&mut rt, Key::End, Mods::default());
-    let end = rt.state.editor.focus;
-    key(&mut rt, Key::Delete, Mods::default());
-    assert_eq!(rt.state.editor.text, source);
-    assert_eq!(rt.state.editor.focus, end);
-    command(&mut rt, 'z');
-    assert_eq!(
-        rt.state.editor.text, source,
-        "boundary no-ops add no undo entries"
+    press(&mut rt, Key::End, Mods::default());
+    assert_eq!(rt.state.focus, 12);
+    press(&mut rt, Key::Delete, Mods::default());
+    assert_eq!(rt.state.text, source);
+    assert_eq!(rt.state.focus, 12);
+    press(
+        &mut rt,
+        Key::Command('z'),
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
     );
+    assert_eq!(rt.state.text, source, "boundary no-ops add no undo entries");
 }
 
 #[test]
@@ -447,7 +474,7 @@ fn block_replacement_uses_the_bounded_shared_input_and_keeps_document_context() 
     state.activate_block_at(start);
     let mut rt = Runtime::new(state, inline_view, (400.0, 400.0), Env::new(false, 1.0));
     rt.frame(0.0);
-    assert_eq!(displayed(&rt), "body\n");
+    assert_eq!(displayed(&rt), "body");
     let field = rt
         .elements()
         .into_iter()
@@ -465,10 +492,10 @@ fn block_replacement_uses_the_bounded_shared_input_and_keeps_document_context() 
         rt.state.editor.text,
         "# before\n\nnew\n\nbody\n\n[link][id]\n\n[id]: /target\n"
     );
-    assert_eq!(displayed(&rt), "new\n\nbody\n");
+    assert_eq!(displayed(&rt), "new\n\nbody");
     command(&mut rt, 'z');
     assert_eq!(rt.state.editor.text, source);
-    assert_eq!(displayed(&rt), "body\n");
+    assert_eq!(displayed(&rt), "body");
 }
 
 #[test]
@@ -584,4 +611,94 @@ fn formatting_undo_in_a_callback_preserves_the_input_range_and_global_selection(
         (0, rt.state.0.text.len())
     );
     assert_eq!(rt.state.0.input_source_range(), None);
+}
+
+#[test]
+fn source_range_exits_are_offered_before_the_key_and_false_keeps_it_bounded() {
+    use rune::SourceRangeExit::{self, *};
+    type Model = (TextEdit, Vec<SourceRangeExit>, bool);
+    fn bounded(m: &Model, _: &mut Cx<Model>) -> El {
+        rune::text_input(&m.0, rune::TextStyle::new(14.0, 400.0).mono().lh(22.0))
+            .source_range(8..12)
+            .on_edit(|m: &mut Model| &mut m.0)
+            .on_source_range_exit(|m: &mut Model, exit, _| {
+                m.1.push(exit);
+                m.2
+            })
+    }
+    let source = "before\n\nbody\n\nafter";
+    let mut edit = TextEdit::new(source);
+    edit.set_caret(8);
+    edit.focused = true;
+    let mut rt = Runtime::new(
+        (edit, Vec::new(), false),
+        bounded,
+        (300.0, 100.0),
+        Env::default(),
+    );
+    rt.frame(0.0);
+    let press = |rt: &mut Runtime<Model>, key: Key, mods: Mods| {
+        let event = KeyEvent { key, mods };
+        rt.key(event.clone());
+        rt.key_up(event);
+        rt.frame(0.0);
+    };
+    let shift = Mods {
+        shift: true,
+        ..Mods::default()
+    };
+    let cmd = Mods {
+        cmd: true,
+        ..Mods::default()
+    };
+    // Movement and typing inside the range are not exits.
+    press(&mut rt, Key::Right, Mods::default());
+    press(&mut rt, Key::Text("x".into()), Mods::default());
+    press(&mut rt, Key::Home, Mods::default());
+    assert!(rt.state.1.is_empty());
+    assert_eq!(rt.state.0.text, "before\n\nbxody\n\nafter");
+
+    // Declined exits keep the bounded behavior.
+    press(&mut rt, Key::Backspace, Mods::default());
+    assert_eq!(rt.state.0.text, "before\n\nbxody\n\nafter");
+    press(&mut rt, Key::Command('a'), cmd);
+    // This view keeps its range fixed at 8..12 rather than rebasing it after typing.
+    assert_eq!((rt.state.0.anchor, rt.state.0.focus), (8, 12));
+    press(&mut rt, Key::Up, shift);
+    rt.update(|m, _| m.0.set_caret(8));
+    rt.frame(0.0);
+    press(&mut rt, Key::Up, Mods::default());
+    assert_eq!(
+        rt.state.1,
+        vec![
+            Delete,
+            SelectAll,
+            Navigate { extend: true },
+            Navigate { extend: false }
+        ]
+    );
+
+    // Nothing is offered during a composition.
+    rt.update(|m, _| {
+        m.0.set_caret(8);
+        m.0.preedit = Some(("に".into(), None));
+        m.1.clear();
+    });
+    rt.frame(0.0);
+    press(&mut rt, Key::Up, Mods::default());
+    assert!(rt.state.1.is_empty());
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.frame(0.0);
+
+    // Accepted, the key applies to the whole buffer.
+    rt.update(|m, _| {
+        m.0.set_caret(8);
+        m.2 = true;
+    });
+    rt.frame(0.0);
+    press(&mut rt, Key::Backspace, Mods::default());
+    assert_eq!(rt.state.0.text, "before\nbxody\n\nafter");
+    assert_eq!(rt.state.1, vec![Delete]);
+    // The range belongs to the view, so its next build places it; the edit applied once.
+    assert_eq!(rt.state.0.focus, 7);
 }
