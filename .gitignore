@@ -1,2 +1,5 @@
 /target/
 /artifacts/
+*.md
+!/README.md
+!/sample.md
