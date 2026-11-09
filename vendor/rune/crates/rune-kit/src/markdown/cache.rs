@@ -1,5 +1,6 @@
 //! Parsed documents kept across commits, and growing a stream's parse from its last block.
 
+use super::syntax::SyntaxNode;
 use super::*;
 
 /// Estimated bytes of parsed documents kept beyond those on screen (see [`budget`]).
@@ -11,6 +12,8 @@ pub(super) type Doc = (Rc<Vec<Block>>, Rc<[Source]>, Rc<[Option<(bool, usize)>]>
 pub(super) struct Parsed {
     pub(super) doc: Doc,
     pub(super) cuts: Rc<[Cut]>,
+    /// Parallel to the top-level blocks.
+    pub(super) syntax: Rc<[SyntaxNode]>,
 }
 
 pub(super) struct Cache {
@@ -54,25 +57,36 @@ pub fn block_source_ranges(src: &str) -> Rc<[Range<usize>]> {
     doc_cached(src).3
 }
 
+/// Editable syntax parallel to [`parse_cached`]'s top-level blocks (and to
+/// [`block_source_ranges`]), from the same cached full-document parse: re-reading it for an
+/// unchanged source (a caret move, a selection) parses nothing.
+pub fn block_syntax(src: &str) -> Rc<[SyntaxNode]> {
+    CACHE.with_borrow_mut(|c| cached(c, src, parse_doc)).syntax
+}
+
 pub(super) fn doc_cached(src: &str) -> Doc {
-    CACHE.with_borrow_mut(|c| cached(c, src, parse_doc))
+    CACHE.with_borrow_mut(|c| cached(c, src, parse_doc)).doc
 }
 
 /// [`doc_cached`] for a source still arriving.
 pub(super) fn stream_cached(src: &str) -> Doc {
-    STREAMS.with_borrow_mut(|c| cached(c, src, parse_streaming))
+    STREAMS.with_borrow_mut(|c| cached(c, src, parse_streaming)).doc
 }
 
-fn cached(c: &mut Cache, src: &str, parse: fn(&str, bool) -> ParsedDoc) -> Doc {
+fn cached(c: &mut Cache, src: &str, parse: fn(&str, bool) -> ParsedDoc) -> Parsed {
     if let Some(hit) = c.docs.get(src) {
-        return hit.doc.clone();
+        return hit.clone();
     }
     let grown = c.last.clone().filter(|last| src.len() > last.len() && src.starts_with(&**last));
     let parsed = grown.as_ref().and_then(|last| extend(c.docs.peek(&**last)?, last.len(), src, parse)).unwrap_or_else(|| {
         #[cfg(test)]
         PARSES.with(|p| p.set((p.get().0 + 1, p.get().1)));
-        let (blocks, sources, tasks, cuts, ranges, maps) = parse(src, true);
-        Parsed { doc: (Rc::new(blocks), sources.into(), tasks.into(), ranges.into(), maps.into()), cuts: cuts.into() }
+        let (blocks, sources, tasks, cuts, ranges, maps, syntax) = parse(src, true);
+        Parsed {
+            doc: (Rc::new(blocks), sources.into(), tasks.into(), ranges.into(), maps.into()),
+            cuts: cuts.into(),
+            syntax: syntax.into(),
+        }
     });
     // A stream's earlier string is dead once it grows, unless something drew it this
     // commit; left in, a long stream would fill the budget with its prefixes.
@@ -86,7 +100,7 @@ fn cached(c: &mut Cache, src: &str, parse: fn(&str, bool) -> ParsedDoc) -> Doc {
     let bytes = 2 * src.len() + 64 * parsed.cuts.len() + 128;
     c.docs.insert(key.clone(), parsed.clone(), bytes);
     c.last = Some(key);
-    parsed.doc
+    parsed
 }
 
 /// The parse of `src`, which extends the `base_len` bytes `base` parsed, reusing every
@@ -104,7 +118,7 @@ fn extend(base: &Parsed, base_len: usize, src: &str, parse: fn(&str, bool) -> Pa
     }
     #[cfg(test)]
     PARSES.with(|p| p.set((p.get().0, p.get().1 + 1)));
-    let (tail, sources, tasks, cuts, ranges, maps) = parse(&src[cut.at..], true);
+    let (tail, sources, tasks, cuts, ranges, maps, syntax) = parse(&src[cut.at..], true);
     let mut blocks = base.doc.0[..cut.blocks].to_vec();
     blocks.extend(tail);
     let sources: Rc<[Source]> = base.doc.1[..cut.sources].iter().cloned().chain(sources).collect();
@@ -114,6 +128,14 @@ fn extend(base: &Parsed, base_len: usize, src: &str, parse: fn(&str, bool) -> Pa
         .chain(ranges.into_iter().map(|range| range.start + cut.at..range.end + cut.at)).collect();
     let maps = base.doc.4[..cut.blocks].iter().cloned()
         .chain(maps.into_iter().map(|m| m.shift_src(cut.at))).collect();
+    let syntax = base.syntax[..cut.blocks]
+        .iter()
+        .cloned()
+        .chain(syntax.into_iter().map(|mut n| {
+            n.shift(cut.at);
+            n
+        }))
+        .collect();
     let cuts = base.cuts[..i]
         .iter()
         .copied()
@@ -124,5 +146,5 @@ fn extend(base: &Parsed, base_len: usize, src: &str, parse: fn(&str, bool) -> Pa
             tasks: c.tasks + cut.tasks,
         }))
         .collect();
-    Some(Parsed { doc: (Rc::new(blocks), sources, tasks, ranges, maps), cuts })
+    Some(Parsed { doc: (Rc::new(blocks), sources, tasks, ranges, maps), cuts, syntax })
 }

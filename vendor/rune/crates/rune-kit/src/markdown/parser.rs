@@ -1,6 +1,7 @@
 //! Markdown source to blocks: the pulldown-cmark event walk, code spans, GFM tables, and the
 //! maps from source bytes to rendered text.
 
+use super::syntax::{SyntaxBuilder, SyntaxNode};
 use super::*;
 
 /// Maps source UTF-8 byte ranges to rendered text UTF-8 byte ranges.
@@ -92,7 +93,7 @@ impl BlockMap {
     }
 }
 
-pub(super) struct Builder {
+pub(super) struct Builder<'a> {
     /// Open containers: (kind, blocks so far, maps so far).
     stack: Vec<(Container, Vec<Block>, Vec<BlockMap>)>,
     inline: Option<(InlineKind, Inline, Vec<Open>, SpanMap)>,
@@ -109,6 +110,8 @@ pub(super) struct Builder {
     image_starts: Vec<usize>,
     image_ranges: Vec<(usize, usize)>,
     tail: Tail,
+    /// Editable syntax, one node per pushed block.
+    syn: SyntaxBuilder<'a>,
 }
 
 /// What the source ends inside, from the last block-level start the walk met.
@@ -133,7 +136,8 @@ pub(super) enum Scope {
     Cell,
 }
 
-pub(super) type ParsedDoc = (Vec<Block>, Vec<Source>, Vec<Option<(bool, usize)>>, Vec<Cut>, Vec<Range<usize>>, Vec<BlockMap>);
+pub(super) type ParsedDoc =
+    (Vec<Block>, Vec<Source>, Vec<Option<(bool, usize)>>, Vec<Cut>, Vec<Range<usize>>, Vec<BlockMap>, Vec<SyntaxNode>);
 
 /// Where a top-level block starts: the start of its first line, and how many top-level blocks,
 /// [`Source`]s and list items come before it.
@@ -194,8 +198,9 @@ enum InlineKind {
     Cell,
 }
 
-impl Builder {
-    fn push(&mut self, b: Block, map: BlockMap) {
+impl Builder<'_> {
+    fn push(&mut self, b: Block, map: BlockMap, node: SyntaxNode) {
+        self.syn.push(node);
         if self.stack.len() == 1 {
             self.block_ranges.push(self.root_range.clone());
         }
@@ -227,7 +232,8 @@ impl Builder {
             let coloured = if closed || line_ended { code.len() } else { code.rfind('\n').unwrap_or(0) };
             self.sources.push(Source { lang, len: code.len(), coloured, open: !closed });
         }
-        self.push(block, BlockMap::Code(map));
+        let node = self.syn.take_code();
+        self.push(block, BlockMap::Code(map), node);
     }
 
     fn inline(&mut self) -> &mut (InlineKind, Inline, Vec<Open>, SpanMap) {
@@ -236,6 +242,7 @@ impl Builder {
     }
 
     fn flush_inline(&mut self) {
+        let syn = self.syn.take_inline();
         if let Some((kind, mut inl, open, mut map)) = self.inline.take() {
             for o in open {
                 end_run(&mut inl, o);
@@ -273,6 +280,7 @@ impl Builder {
                     InlineKind::Heading(l) => Block::Heading(l, inl),
                 },
                 BlockMap::Inline(map),
+                syn.map_or(SyntaxNode::Paragraph(Default::default()), |s| s.into_node()),
             );
         }
     }
@@ -281,6 +289,8 @@ impl Builder {
     fn pop_container(&mut self) {
         self.flush_inline();
         let Some((c, blocks, maps)) = self.stack.pop() else { return };
+        // Items stay with their list's syntax; other containers pair with the block pushed here.
+        let node = self.syn.pop().unwrap_or(SyntaxNode::Rule(0..0));
         match c {
             Container::Item(_) => {
                 if let Some((Container::List(_, items, item_maps), _, _)) = self.stack.last_mut() {
@@ -288,14 +298,16 @@ impl Builder {
                     item_maps.push(maps);
                 }
             }
-            Container::List(start, items, item_maps) => self.push(Block::List { start, items }, BlockMap::List(item_maps)),
-            Container::Quote => self.push(Block::Quote(blocks), BlockMap::Quote(maps)),
+            Container::List(start, items, item_maps) => {
+                self.push(Block::List { start, items }, BlockMap::List(item_maps), node)
+            }
+            Container::Quote => self.push(Block::Quote(blocks), BlockMap::Quote(maps), node),
             Container::Table(mut t, cells, head, mut rows, cell_maps) => {
                 if !cells.is_empty() {
                     t.rows.push(cells);
                     rows.push(cell_maps);
                 }
-                self.push(Block::Table(t), BlockMap::Table { head, rows });
+                self.push(Block::Table(t), BlockMap::Table { head, rows }, node);
             }
             Container::Root => {}
         }
@@ -394,6 +406,7 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
         image_starts: Vec::new(),
         image_ranges: Vec::new(),
         tail: Tail::None,
+        syn: SyntaxBuilder::new(src),
     };
     let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut events = super::interrupt::list_interrupts(src, Parser::new_ext(src, opts).into_offset_iter());
@@ -425,6 +438,13 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
             Event::Start(Tag::Table(_)) | Event::Rule => Tail::None,
             _ => b.tail,
         };
+        // The syntax builder sees an end before the block builder flushes for it, and any other
+        // event after, so a block flushed by a start event keeps its own syntax state.
+        let ends = matches!(ev, Event::End(_));
+        if ends {
+            b.syn.observe(&ev, &range);
+        }
+        let seen = (!ends).then(|| (ev.clone(), range.clone()));
         match ev {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -590,9 +610,12 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
             }
             Event::Rule => {
                 b.flush_inline();
-                b.push(Block::Rule, BlockMap::None);
+                b.push(Block::Rule, BlockMap::None, SyntaxNode::Rule(range));
             }
             _ => {}
+        }
+        if let Some((ev, range)) = seen {
+            b.syn.observe(&ev, &range);
         }
     }
     b.flush_inline();
@@ -605,13 +628,17 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
     }
     let last_para = b.last_root_para.take();
     let (_, mut blocks, mut maps) = b.stack.pop().unwrap();
+    let mut syntax = b.syn.finish();
     if let (Some(Block::Para(_)), Some(range)) = (blocks.last(), last_para)
         && let Some((t, map)) = pending_table(&src[range.start..], range.start, autolink)
     {
         *blocks.last_mut().unwrap() = Block::Table(t);
         *maps.last_mut().unwrap() = map;
+        if let Some(node) = syntax.last_mut() {
+            *node = SyntaxNode::Table(node.range());
+        }
     }
-    ((blocks, b.sources, b.tasks, b.cuts, b.block_ranges, maps), b.tail)
+    ((blocks, b.sources, b.tasks, b.cuts, b.block_ranges, maps, syntax), b.tail)
 }
 
 fn code_block(text: String, fence: &Fence) -> Block {
@@ -701,7 +728,7 @@ fn split_row(line: &str, base_offset: usize) -> Vec<(usize, String)> {
 }
 
 fn inline_of(src: &str, offset: usize, autolink: bool) -> (Inline, SpanMap) {
-    let (blocks, _, _, _, _, maps) = parse_doc(src, autolink);
+    let (blocks, _, _, _, _, maps, _) = parse_doc(src, autolink);
     match (blocks.into_iter().next(), maps.into_iter().next()) {
         (Some(Block::Para(i)), Some(BlockMap::Inline(mut m))) => {
             m.shift_src(offset);
@@ -715,13 +742,13 @@ fn inline_of(src: &str, offset: usize, autolink: bool) -> (Inline, SpanMap) {
     }
 }
 
-pub(super) fn open(b: &mut Builder, style: Style, url: Option<String>) {
+pub(super) fn open(b: &mut Builder<'_>, style: Style, url: Option<String>) {
     let inl = b.inline();
     let start = inl.1.text.len();
     inl.2.push(Open { start, style, url });
 }
 
-fn close(b: &mut Builder) {
+fn close(b: &mut Builder<'_>) {
     let (_, inl, open, _) = b.inline();
     if let Some(o) = open.pop() {
         end_run(inl, o);

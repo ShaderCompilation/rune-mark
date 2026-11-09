@@ -207,7 +207,7 @@ fn a_stream_reparses_from_its_last_block_and_matches_a_whole_parse() {
         for end in (1..=doc.len()).filter(|&i| doc.is_char_boundary(i)) {
             let src = &doc[..end];
             let (blocks, sources, tasks, starts, maps) = doc_cached(src);
-            let (want, want_sources, want_tasks, want_cuts, want_starts, want_maps) = parse_doc(src, true);
+            let (want, want_sources, want_tasks, want_cuts, want_starts, want_maps, _) = parse_doc(src, true);
             assert_eq!(*blocks, want, "blocks of {src:?}");
             assert_eq!(&*sources, &want_sources[..], "sources of {src:?}");
             assert_eq!(&*tasks, &want_tasks[..], "tasks of {src:?}");

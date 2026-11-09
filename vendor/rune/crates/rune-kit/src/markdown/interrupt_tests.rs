@@ -36,7 +36,7 @@ fn numbered_lines_after_a_heading_line_are_a_list() {
 
 #[test]
 fn item_text_maps_to_its_source() {
-    let (_, _, _, _, _, maps) = parse_doc(JUICE, true);
+    let (_, _, _, _, _, maps, _) = parse_doc(JUICE, true);
     let BlockMap::List(items) = &maps[3] else { panic!("not a list map") };
     let BlockMap::Inline(map) = &items[0][0] else { panic!("not inline") };
     let (src, out) = map.0.first().unwrap();

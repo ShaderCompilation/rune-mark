@@ -60,6 +60,7 @@ mod render;
 mod source;
 mod stream;
 mod style;
+mod syntax;
 mod table;
 
 pub use find::{Case, find};
@@ -70,10 +71,14 @@ use crate::budget::Budget;
 use crate::syntax::{Highlighter, SyntaxTheme};
 pub use crate::syntax::Syntax;
 use links::{LinkHelp, LinkLook, LinkRing, LinkWire};
-pub use cache::{block_source_ranges, parse_cached};
+pub use cache::{block_source_ranges, block_syntax, parse_cached};
 pub use highlight::{Highlight, HighlightItem};
 pub use parser::parse;
 pub use source::{RenderedText, SourceClick, SourceRegion, rendered_texts, source_region_at, source_regions};
+pub use syntax::{
+    CodeSyntax, ContainerLine, FenceSyntax, HeadingSyntax, InlineSyntax, InlineSyntaxKind, LinkSyntax, LinkSyntaxKind,
+    ListItemSyntax, ListSyntax, ParagraphSyntax, QuoteSyntax, SyntaxMark, SyntaxMarkKind, SyntaxNode, TaskSyntax,
+};
 use source::SourceWire;
 
 use autolink::autolink_inline;
@@ -393,7 +398,7 @@ impl Markdown {
             (true, false) => doc_cached(&self.src),
             (true, true) => stream_cached(&self.src),
             (false, streaming) => {
-                let (b, s, t, _, st, m) = if streaming { parse_streaming(&self.src, false) } else { parse_doc(&self.src, false) };
+                let (b, s, t, _, st, m, _) = if streaming { parse_streaming(&self.src, false) } else { parse_doc(&self.src, false) };
                 (Rc::new(b), s.into(), t.into(), st.into(), m.into())
             }
         };
@@ -419,5 +424,7 @@ impl Markdown {
 
 #[cfg(test)]
 mod metadata_tests;
+#[cfg(test)]
+mod syntax_tests;
 #[cfg(test)]
 mod tests;

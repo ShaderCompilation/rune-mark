@@ -1,8 +1,14 @@
 //! Read-only metadata derived from the shared editor buffer.
 
 use std::ops::Range;
+use std::rc::Rc;
 
-use rune_kit::markdown::{Block, SourceRegion, block_source_ranges, parse_cached, source_regions};
+use rune_kit::markdown::{
+    Block, SourceRegion, SyntaxNode, block_source_ranges, block_syntax, parse_cached,
+    source_regions,
+};
+
+use crate::reveal::{Focus, Reveal, reveal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockKind {
@@ -30,6 +36,8 @@ pub struct ParsedDocument {
     source: String,
     blocks: Vec<BlockMetadata>,
     regions: Vec<SourceRegion>,
+    /// Parallel to `blocks`, shared with Rune Kit's parse cache.
+    syntax: Rc<[SyntaxNode]>,
 }
 
 impl ParsedDocument {
@@ -58,6 +66,7 @@ impl ParsedDocument {
             source: source.to_owned(),
             blocks,
             regions: source_regions(source),
+            syntax: block_syntax(source),
         }
     }
 
@@ -76,6 +85,17 @@ impl ParsedDocument {
 
     pub fn regions(&self) -> &[SourceRegion] {
         &self.regions
+    }
+
+    /// Editable syntax for each block: marker, fence, prefix and delimiter ranges.
+    pub fn syntax(&self) -> &[SyntaxNode] {
+        &self.syntax
+    }
+
+    /// The syntax Live Preview reveals for `focus` (`None` when the editor is unfocused).
+    /// Uses the cached syntax: a caret or selection change never reparses.
+    pub fn reveal(&self, focus: Option<Focus>) -> Reveal {
+        reveal(&self.syntax, focus)
     }
 
     pub(crate) fn rebase_range(&self, range: Range<usize>, source: &str) -> Range<usize> {
